@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script>
+    // Decide the theme before the page paints (avoids flicker). Saved setting takes precedence over the OS setting.
+    (function() {
+      let saved = null;
+      try { saved = localStorage.getItem("darkMode"); } catch (e) { /* keep working where storage is unavailable */ }
+      const prefersDark = globalThis.matchMedia("(prefers-color-scheme: dark)").matches;
+      const theme = saved || (prefersDark ? "dark" : "light");
+      document.documentElement.setAttribute("data-bs-theme", theme);
+    })();
+
+    function toggleDarkMode() {
+      const html = document.documentElement;
+      const newTheme = html.getAttribute("data-bs-theme") === "dark"
+        ? "light"
+        : "dark";
+      html.setAttribute("data-bs-theme", newTheme);
+      try { localStorage.setItem("darkMode", newTheme); } catch (e) { /* switching still works even if saving fails */ }
+    }
+    // 言語切替: /<言語コード>/ へ移動する。言語を増やすときは <select id="lang"> に option を足し、/<言語コード>/index.html を用意する。
+    function changeLang() {
+      const langObj = document.getElementById("lang");
+      const lang = langObj.options[langObj.selectedIndex].value;
+      location.href = `/vrm-pose-maker/${lang}/`;
+    }
+  </script>
+  <title>VRM Pose Maker</title>
+  <link rel="alternate" hreflang="ja" href="/vrm-pose-maker/ja/" />
+  <link rel="alternate" hreflang="en" href="/vrm-pose-maker/en/" />
+  <link rel="alternate" hreflang="x-default" href="/vrm-pose-maker/" />
+
+  <!-- 読み込みの高速化: CDNへ先に接続し、ES Module の依存チェーンを並列に先読みする -->
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+  <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.min.js" />
+  <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3.5.5/lib/three-vrm.module.min.js" />
+  <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/loaders/GLTFLoader.js" />
+  <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/controls/OrbitControls.js" />
+  <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/utils/BufferGeometryUtils.js" />
+  <link rel="modulepreload" href="/vrm-pose-maker/js/app.js" />
+  <link rel="modulepreload" href="/vrm-pose-maker/js/scene.js" />
+  <link rel="modulepreload" href="/vrm-pose-maker/js/vrm-loader.js" />
+  <link rel="modulepreload" href="/vrm-pose-maker/js/ui.js" />
+  <link rel="modulepreload" href="/vrm-pose-maker/js/bone-control.js" />
+  <link rel="modulepreload" href="/vrm-pose-maker/js/bone-sphere.js" />
+  <link rel="modulepreload" href="/vrm-pose-maker/js/exporter.js" />
+  <link rel="modulepreload" href="/vrm-pose-maker/js/bone-hierarchy.js" />
+  <link rel="modulepreload" href="/vrm-pose-maker/js/bone-limits.js" />
+  <link rel="modulepreload" href="/vrm-pose-maker/js/light-panel.js" />
+  <link rel="modulepreload" href="/vrm-pose-maker/js/light-gizmo.js" />
+  <link rel="modulepreload" href="/vrm-pose-maker/js/material-panel.js" />
+  <link rel="modulepreload" href="/vrm-pose-maker/js/controls.js" />
+  <link rel="modulepreload" href="/vrm-pose-maker/js/i18n.js" />
+
+  <!-- Bootstrap 5 -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <!-- Bootstrap Icons -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+  <!-- Custom CSS -->
+  <link href="css/style.css" rel="stylesheet" />
+</head>
+<body class="bg-body text-body d-flex flex-column" style="height:100vh; overflow:hidden;" data-animation-list="/vrm-pose-maker/animations/list.txt">
+
+  <!-- Navbar -->
+  <nav class="navbar bg-body-tertiary border-bottom px-3 py-2 flex-shrink-0">
+    <span class="navbar-brand mb-0 h5">
+      <i class="bi bi-person-bounding-box me-2"></i>VRM Pose Maker
+    </span>
+    <div class="d-flex align-items-center gap-2">
+      <button id="btn-load-vrm" class="btn btn-outline-body btn-sm">
+        <i class="bi bi-folder2-open me-1"></i>Load VRM
+      </button>
+      <input type="file" id="input-vrm" accept=".vrm" multiple class="d-none" />
+      <select id="lang" class="form-select form-select-sm w-auto" title="Language" aria-label="Language" onchange="changeLang()">
+        <option value="ja">日本語</option>
+        <option value="en" selected>English</option>
+      </select>
+      <button id="btn-theme-toggle" type="button" class="btn btn-outline-body btn-sm" onclick="toggleDarkMode()" title="Toggle dark / light mode" aria-label="Toggle dark mode">
+        <i class="bi bi-sun-fill theme-icon-dark"></i><i class="bi bi-moon-stars-fill theme-icon-light"></i>
+      </button>
+    </div>
+  </nav>
+
+  <!-- Main layout -->
+  <div class="d-flex flex-grow-1 overflow-hidden">
+
+    <!-- Left Panel: Bone List -->
+    <div id="panel-left" class="bg-body border-end border-secondary d-flex flex-column" style="width:220px; min-width:180px;">
+      <div class="p-2 border-bottom border-secondary">
+        <span class="small fw-bold text-secondary">
+          <i class="bi bi-diagram-3 me-1"></i>Bones
+        </span>
+      </div>
+      <div id="bone-list-container" class="flex-grow-1 overflow-auto p-1">
+        <div class="text-secondary small p-2">Please load a VRM</div>
+      </div>
+    </div>
+
+    <!-- Center: 3D Canvas Area -->
+    <div id="canvas-wrapper" class="flex-grow-1 d-flex flex-column position-relative">
+      <!-- Drag & drop overlay -->
+      <div id="drop-overlay" class="d-none" aria-hidden="true">
+        <div class="drop-overlay-box"><i class="bi bi-box-arrow-in-down me-2"></i>Drop here<div class="small mt-1">.vrm (add model) / .glb, .fbx, .vrma (pose) / .vrmposer.json (project) / image, video (background)</div></div>
+      </div>
+
+      <!-- Loading overlay -->
+      <div id="loading-overlay" class="position-absolute top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center d-none" style="z-index:10; background:rgba(0,0,0,0.7);">
+        <div class="text-center">
+          <div class="spinner-border text-body mb-2" role="status"></div>
+          <div class="text-body small">Loading...</div>
+        </div>
+      </div>
+
+      <!-- Canvas -->
+      <canvas id="three-canvas" class="flex-grow-1 d-block w-100"></canvas>
+
+      <!-- View Direction Buttons (bottom center of canvas) -->
+      <div id="axis-buttons" class="position-absolute bottom-0 start-50 translate-middle-x mb-3 d-flex gap-2 align-items-center">
+        <span class="text-secondary small me-1">Camera:</span>
+        <button id="btn-view-front" class="btn btn-sm btn-outline-body"     title="View from the front">Front (F)</button>
+        <button id="btn-view-back"  class="btn btn-sm btn-outline-body"     title="View from the back">Back (B)</button>
+        <button id="btn-view-right" class="btn btn-sm btn-outline-danger"   title="View from the right">Right (R)</button>
+        <button id="btn-view-left"  class="btn btn-sm btn-outline-danger"   title="View from the left">Left (L)</button>
+        <button id="btn-view-top"   class="btn btn-sm btn-outline-success"  title="View from above">Top (T)</button>
+      </div>
+
+      <!-- Selected bone hint -->
+      <div id="bone-hint" class="position-absolute top-0 start-50 translate-middle-x mt-2 badge bg-secondary d-none"></div>
+    </div>
+
+    <!-- Right Panel: Bone Controls -->
+    <div id="panel-right" class="bg-body border-start border-secondary d-flex flex-column" style="width:240px; min-width:200px;">
+      <div class="p-2 border-bottom border-secondary">
+        <div class="btn-group btn-group-sm w-100" role="group" aria-label="Switch right panel">
+          <input type="radio" class="btn-check" name="right-panel-tab" id="tab-model" autocomplete="off">
+          <label class="btn btn-outline-primary" for="tab-model" title="Models & poses">
+            <i class="bi bi-people"></i>
+          </label>
+          <input type="radio" class="btn-check" name="right-panel-tab" id="tab-bone" autocomplete="off" checked>
+          <label class="btn btn-outline-primary" for="tab-bone" title="Bones">
+            <i class="bi bi-person-arms-up"></i>
+          </label>
+          <input type="radio" class="btn-check" name="right-panel-tab" id="tab-expression" autocomplete="off">
+          <label class="btn btn-outline-primary" for="tab-expression" title="Expressions">
+            <i class="bi bi-emoji-smile"></i>
+          </label>
+          <input type="radio" class="btn-check" name="right-panel-tab" id="tab-material" autocomplete="off">
+          <label class="btn btn-outline-primary" for="tab-material" title="Materials">
+            <i class="bi bi-palette2"></i>
+          </label>
+          <input type="radio" class="btn-check" name="right-panel-tab" id="tab-scene" autocomplete="off">
+          <label class="btn btn-outline-primary" for="tab-scene" title="Background & lights">
+            <i class="bi bi-image"></i>
+          </label>
+        </div>
+      </div>
+
+      <!-- Models & poses tab -->
+      <div id="panel-tab-model" class="d-none flex-column flex-grow-1 overflow-hidden">
+        <div class="p-2 border-bottom border-secondary">
+          <div class="small fw-bold text-secondary mb-2"><i class="bi bi-people me-1"></i>Models & poses</div>
+          <div class="small text-secondary">Model being edited</div>
+          <div id="active-model-name" class="active-model-name text-truncate">Please load a model</div>
+        </div>
+        <div class="p-2 border-bottom border-secondary">
+          <div class="small text-secondary mb-1">Models in the scene</div>
+          <div id="model-list" class="model-list"><div class="text-secondary small">No models</div></div>
+        </div>
+        <div class="flex-grow-1 overflow-auto p-2">
+          <button id="btn-model-add" class="btn btn-sm btn-outline-body w-100 mb-3"><i class="bi bi-plus-lg me-1"></i>Add VRM</button>
+          <div class="small text-secondary mb-1">Pose of the selected model</div>
+          <div class="d-grid gap-2">
+            <button id="btn-load-pose" class="btn btn-sm btn-outline-warning" disabled title="Load a GLB / FBX / VRMA file"><i class="bi bi-upload me-1"></i>Load pose</button>
+            <button id="btn-toggle-animation" class="btn btn-sm btn-outline-info" disabled><i class="bi bi-pause-fill me-1"></i>Pause animation</button>
+            <select id="select-random-animation" class="form-select form-select-sm" disabled title="Poses targeted by random playback. The pose currently playing is selected; choose another to switch to it"><option value="">(Loading pose list…)</option></select>
+            <button id="btn-random-animation" class="btn btn-sm btn-outline-info" disabled><i class="bi bi-shuffle me-1"></i>Random pose playback</button>
+            <button id="btn-save-vrma" class="btn btn-sm btn-outline-warning" disabled title="Save the current pose as .vrma"><i class="bi bi-download me-1"></i>Save pose</button>
+            <button id="btn-copy-pose" class="btn btn-sm btn-outline-warning" disabled><i class="bi bi-clipboard me-1"></i>Copy pose to clipboard</button>
+            <button id="btn-paste-pose" class="btn btn-sm btn-outline-warning" disabled><i class="bi bi-clipboard-check me-1"></i>Paste pose from clipboard</button>
+            <button id="btn-reset-pose" class="btn btn-sm btn-outline-secondary" disabled><i class="bi bi-arrow-counterclockwise me-1"></i>Reset pose</button>
+          </div>
+          <input type="file" id="input-pose" accept=".glb,.fbx,.vrma" class="d-none" />
+        </div>
+      </div>
+
+      <!-- Bones tab -->
+      <div id="panel-tab-bone" class="d-flex flex-column flex-grow-1 overflow-hidden">
+      <div class="p-2 border-bottom border-secondary">
+        <div class="d-flex align-items-center justify-content-between">
+          <span class="small fw-bold text-secondary">
+            <i class="bi bi-sliders me-1"></i>Bone rotation
+          </span>
+          <button type="button" class="btn btn-sm btn-link text-secondary p-0"
+                  data-bs-toggle="collapse" data-bs-target="#bone-controls-help"
+                  aria-expanded="false" aria-controls="bone-controls-help"
+                  title="Show controls help">
+            <i class="bi bi-question-circle"></i>
+          </button>
+        </div>
+
+        <div class="btn-group btn-group-sm w-100 mt-2" role="group" aria-label="Manipulation mode">
+          <input type="radio" class="btn-check" name="manip-mode" id="manip-mode-sphere" autocomplete="off" checked>
+          <label class="btn btn-outline-primary" for="manip-mode-sphere">
+            <i class="bi bi-circle me-1"></i>Sphere
+          </label>
+          <input type="radio" class="btn-check" name="manip-mode" id="manip-mode-gizmo" autocomplete="off">
+          <label class="btn btn-outline-primary" for="manip-mode-gizmo">
+            <i class="bi bi-bounding-box-circles me-1"></i>Gizmo
+          </label>
+        </div>
+
+        <div class="collapse mt-2" id="bone-controls-help">
+          <div id="bone-controls-help-body" class="small bone-help-scroll">
+            <div class="fw-bold text-body mb-1"><i class="bi bi-mouse me-1"></i>PC (mouse)</div>
+            <ul class="mb-2 ps-3">
+              <li>Left-drag the model (outside sphere/gizmo): move the model</li>
+              <li>Left-drag (outside model, sphere and gizmo): rotate camera</li>
+              <li>Right-drag (outside sphere/gizmo): pan camera</li>
+              <li>Hold left button (inside sphere, or on a gizmo ring): rotate bone</li>
+              <li>Hold right button (inside sphere/gizmo): move bone</li>
+              <li>Right-click (inside sphere/gizmo, no movement): switch to parent bone</li>
+              <li>Left-click (yellow center dot): toggle control target</li>
+            </ul>
+            <div class="fw-bold text-body mb-1"><i class="bi bi-tablet me-1"></i>Tablet (touch)</div>
+            <ul class="mb-0 ps-3">
+              <li>One-finger drag (on the model): move the model</li>
+              <li>One-finger drag (outside model, sphere and gizmo): rotate camera</li>
+              <li>Two-finger drag (outside sphere/gizmo): pan camera</li>
+              <li>One-finger hold (inside sphere, or on a gizmo ring): rotate bone</li>
+              <li>Long press (inside sphere/gizmo): switch to parent bone</li>
+              <li>Two-finger drag (inside sphere/gizmo): move bone</li>
+              <li>One-finger tap (yellow center dot): toggle control target</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div id="bone-controls" class="flex-grow-1 overflow-auto p-2">
+        <div class="text-secondary small p-2">Please select a bone</div>
+      </div>
+      </div>
+
+      <!-- Expressions tab -->
+      <div id="panel-tab-expression" class="d-none flex-column flex-grow-1 overflow-hidden">
+        <div class="p-2 border-bottom border-secondary d-flex align-items-center justify-content-between">
+          <span class="small fw-bold text-secondary">
+            <i class="bi bi-emoji-smile me-1"></i>Expressions
+          </span>
+          <button type="button" id="btn-reset-expressions" class="btn btn-sm btn-outline-secondary" title="Reset all expressions">
+            <i class="bi bi-arrow-counterclockwise"></i>
+          </button>
+        </div>
+        <div id="expression-controls" class="flex-grow-1 overflow-auto p-2">
+          <div class="text-secondary small p-2">Please load a VRM</div>
+        </div>
+      </div>
+
+      <!-- Background tab -->
+      <div id="panel-tab-scene" class="d-none flex-column flex-grow-1 overflow-hidden">
+        <div class="p-2 border-bottom border-secondary">
+          <span class="small fw-bold text-secondary">
+            <i class="bi bi-image me-1"></i>Background & floor
+          </span>
+        </div>
+        <div class="flex-grow-1 overflow-auto p-2">
+          <div class="mb-3">
+            <label class="form-label small text-secondary mb-1" for="bg-color">Background color</label>
+            <input type="color" id="bg-color" class="form-control form-control-color w-100" value="#1a1a2e" title="Background color">
+          </div>
+          <div class="mb-3">
+            <label class="form-label small text-secondary mb-1" for="bg-image">Background image / video</label>
+            <input type="file" id="bg-image" class="form-control form-control-sm" accept="image/*,video/*">
+            <button type="button" id="btn-clear-bg-image" class="btn btn-sm btn-outline-secondary w-100 mt-1">
+              <i class="bi bi-x-circle me-1"></i>Remove image/video and use color
+            </button>
+          </div>
+          <div class="form-check form-switch mb-3">
+            <input class="form-check-input" type="checkbox" role="switch" id="toggle-grid" checked>
+            <label class="form-check-label small" for="toggle-grid">Show floor grid</label>
+          </div>
+          <hr class="border-secondary">
+          <div class="small fw-bold text-secondary mb-2"><i class="bi bi-lightbulb me-1"></i>Lights</div>
+          <div id="light-controls"></div>
+        </div>
+      </div>
+
+      <!-- Materials tab -->
+      <div id="panel-tab-material" class="d-none flex-column flex-grow-1 overflow-hidden">
+        <div class="p-2 border-bottom border-secondary">
+          <span class="small fw-bold text-secondary">
+            <i class="bi bi-palette2 me-1"></i>Materials
+          </span>
+          <select id="material-select" class="form-select form-select-sm mt-2" disabled></select>
+        </div>
+        <div id="material-controls" class="flex-grow-1 overflow-auto p-2">
+          <div class="text-secondary small p-2">Please load a VRM</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Footer: Action Buttons -->
+  <div id="footer" class="bg-body-tertiary border-top border-secondary px-3 py-2 flex-shrink-0 d-flex flex-wrap gap-2 align-items-center">
+    <button id="btn-load-project" class="btn btn-outline-primary btn-sm">
+      <i class="bi bi-upload me-1"></i>Load project
+    </button>
+    <button id="btn-save-project" class="btn btn-outline-primary btn-sm" disabled>
+      <i class="bi bi-download me-1"></i>Save project
+    </button>
+    <input type="file" id="input-project" accept=".json,.vrmposer.json" class="d-none" />
+    <div class="vr mx-1"></div>
+    <button id="btn-screenshot" class="btn btn-outline-body btn-sm" disabled>
+      <i class="bi bi-camera me-1"></i>Screenshot
+    </button>
+    <select id="screenshot-scale" class="form-select form-select-sm w-auto" title="Screenshot size (multiplier of the current view; capped by the browser/GPU limit)" aria-label="Screenshot scale">
+      <option value="1" selected>×1</option>
+      <option value="2">×2</option>
+      <option value="3">×3</option>
+      <option value="4">×4</option>
+    </select>
+    <div class="form-check form-switch mb-0">
+      <input class="form-check-input" type="checkbox" role="switch" id="screenshot-transparent">
+      <label class="form-check-label small" for="screenshot-transparent" title="Saves a PNG with no background, floor grid or fog">Transparent background</label>
+    </div>
+  </div>
+
+  <!-- UI strings dictionary (looked up from JS via tr(key)). Managed per language in this HTML -->
+  <script type="application/json" id="i18n">
+  {
+    "app.001": "Pose saved",
+    "app.002": "Pose copied to clipboard",
+    "app.003": "Failed to copy to clipboard",
+    "app.004": "Failed to paste from clipboard",
+    "app.005": "Project saved",
+    "app.006": "(No list: {0})",
+    "app.007": "Screenshot saved",
+    "app.008": "Unsupported project file",
+    "app.009": "Project loaded",
+    "app.010": "Failed to load project",
+    "app.011": "Loaded {0}",
+    "app.012": "Failed to load VRM: {0}",
+    "app.013": "Unsupported file (.vrm / .glb / .fbx / .vrma / .vrmposer.json / image / video)",
+    "app.014": "Please load a VRM model first",
+    "app.015": "Only one pose can be applied: {0}",
+    "app.016": "<div class=\"text-secondary small\">No models</div>",
+    "app.017": "Select {0}",
+    "app.018": "Remove {0} from the scene",
+    "app.019": "Please load a model",
+    "app.020": "Unsupported file format (choose .glb / .fbx / .vrma)",
+    "app.021": "Failed to load pose",
+    "app.022": "{0} is not a supported file format (.glb / .fbx / .vrma)",
+    "app.023": "{0}: Please choose a file that contains an animation",
+    "app.024": "{0}: Please choose a GLB that contains a scene",
+    "app.025": "{0}: The VRMA has no humanoid information",
+    "app.026": "{0}: Could not find any bones matching the VRM",
+    "app.027": "[vrm-pose-app] Unmapped bones: {0}",
+    "app.028": "{0}: Could not find enough bones matching the VRM (unmapped bone names, e.g.: {1})",
+    "app.029": "{0}: Could not find enough bones matching the VRM",
+    "app.030": "<i class=\"bi bi-pause-fill me-1\"></i>Pause animation",
+    "app.031": "<i class=\"bi bi-play-fill me-1\"></i>Play animation",
+    "app.032": "Failed to fetch the animation list",
+    "app.033": "Select a pose…",
+    "app.034": "Could not fetch {0}",
+    "app.035": "Could not fetch the animation list ({0})",
+    "app.036": "The animation list is empty. Put .fbx / .glb / .vrma files in the animations folder and generate list.txt",
+    "app.037": "Could not load {0}. Continuing random playback",
+    "app.038": "Random pose playback failed",
+    "app.039": "<i class=\"bi bi-stop-fill me-1\"></i>Stop random pose playback",
+    "app.040": "<i class=\"bi bi-shuffle me-1\"></i>Random pose playback",
+    "app.041": "<div class=\"text-secondary small p-2\">Please load a VRM</div>",
+    "app.042": "Removed {0} from the scene",
+    "app.043": "Pinning the selected bone as a hinge and moving everything from its parent bone \"{0}\" upward",
+    "app.044": "Control target set back to the selected bone itself",
+    "app.045": "Expressions reset",
+    "app.046": "This bone has no left/right counterpart",
+    "app.047": "Mirrored \"{0}\" to \"{1}\"",
+    "app.048": "Pose reset (including position)",
+    "ui.001": "Torso",
+    "ui.002": "Hips",
+    "ui.003": "Spine",
+    "ui.004": "Chest",
+    "ui.005": "Upper chest",
+    "ui.006": "Head",
+    "ui.007": "Neck",
+    "ui.008": "Jaw",
+    "ui.009": "Left eye",
+    "ui.010": "Right eye",
+    "ui.011": "Left arm",
+    "ui.012": "Left shoulder",
+    "ui.013": "Left upper arm",
+    "ui.014": "Left lower arm",
+    "ui.015": "Left hand",
+    "ui.016": "Left fingers",
+    "ui.017": "Left thumb 1",
+    "ui.018": "Left thumb 2",
+    "ui.019": "Left thumb 3",
+    "ui.020": "Left index 1",
+    "ui.021": "Left index 2",
+    "ui.022": "Left index 3",
+    "ui.023": "Left middle 1",
+    "ui.024": "Left middle 2",
+    "ui.025": "Left middle 3",
+    "ui.026": "Left ring 1",
+    "ui.027": "Left ring 2",
+    "ui.028": "Left ring 3",
+    "ui.029": "Left little 1",
+    "ui.030": "Left little 2",
+    "ui.031": "Left little 3",
+    "ui.032": "Right arm",
+    "ui.033": "Right shoulder",
+    "ui.034": "Right upper arm",
+    "ui.035": "Right lower arm",
+    "ui.036": "Right hand",
+    "ui.037": "Right fingers",
+    "ui.038": "Right thumb 1",
+    "ui.039": "Right thumb 2",
+    "ui.040": "Right thumb 3",
+    "ui.041": "Right index 1",
+    "ui.042": "Right index 2",
+    "ui.043": "Right index 3",
+    "ui.044": "Right middle 1",
+    "ui.045": "Right middle 2",
+    "ui.046": "Right middle 3",
+    "ui.047": "Right ring 1",
+    "ui.048": "Right ring 2",
+    "ui.049": "Right ring 3",
+    "ui.050": "Right little 1",
+    "ui.051": "Right little 2",
+    "ui.052": "Right little 3",
+    "ui.053": "Left leg",
+    "ui.054": "Left thigh",
+    "ui.055": "Left shin",
+    "ui.056": "Left foot",
+    "ui.057": "Left toes",
+    "ui.058": "Right leg",
+    "ui.059": "Right thigh",
+    "ui.060": "Right shin",
+    "ui.061": "Right foot",
+    "ui.062": "Right toes",
+    "ui.063": "Happy",
+    "ui.064": "Angry",
+    "ui.065": "Sad",
+    "ui.066": "Relaxed",
+    "ui.067": "Surprised",
+    "ui.068": "Mouth: A",
+    "ui.069": "Mouth: I",
+    "ui.070": "Mouth: U",
+    "ui.071": "Mouth: E",
+    "ui.072": "Mouth: O",
+    "ui.073": "Blink (both eyes)",
+    "ui.074": "Blink (left eye)",
+    "ui.075": "Blink (right eye)",
+    "ui.076": "Look: up",
+    "ui.077": "Look: down",
+    "ui.078": "Look: left",
+    "ui.079": "Look: right",
+    "ui.080": "<div class=\"text-secondary small p-2\">Please select a bone</div>",
+    "ui.081": "<i class=\"bi bi-arrow-counterclockwise\"></i> Reset",
+    "ui.082": "Reset this bone's rotation and position",
+    "ui.083": "<i class=\"bi bi-symmetry-vertical me-1\"></i>Mirror to \"{0}\"",
+    "ui.084": "Copies the pose of this bone and its descendants (down to the hand and fingers for an arm) to the opposite side.",
+    "ui.085": "<i class=\"bi bi-arrow-up-circle me-1\"></i>To parent bone ({0})",
+    "ui.086": "Switches the selection itself to the parent bone toward the root (the sphere moves too). This is separate from the \"control target toggle\" (clicking the center of the sphere).",
+    "ui.087": "<i class=\"bi bi-info-circle me-1\"></i>This is the root-most bone",
+    "ui.088": "Reset the {0} axis only",
+    "ui.089": "<div class=\"text-secondary small p-2\">This VRM has no expressions</div>",
+    "ui.090": "Reset this expression to 0",
+    "mat.001": "None",
+    "mat.002": "Normal",
+    "mat.003": "Shading ratio",
+    "mat.004": "World coordinates",
+    "mat.005": "Screen coordinates",
+    "mat.006": "Color (lit side)",
+    "mat.007": "Opacity",
+    "mat.008": "0 is fully transparent, 1 is fully opaque.",
+    "mat.009": "Alpha cutoff",
+    "mat.010": "Threshold below which texture alpha is not drawn at all (fully transparent). Used to avoid jagged cut-out edges.",
+    "mat.011": "Enable transparency",
+    "mat.012": "Turns transparent rendering itself on/off. While off, changing opacity or alpha cutoff above has no effect.",
+    "mat.013": "Double-sided",
+    "mat.014": "The \"back face\" is the side of a polygon whose normal points away from you. For thin, open, sheet-like meshes such as hair or skirts, turning this on draws the back side too, which fixes the case where you look through a gap and see nothing inside. For closed meshes such as a body, back faces are never visible to the camera, so turning it on changes nothing.",
+    "mat.015": "Wireframe",
+    "mat.016": "Metalness",
+    "mat.017": "Roughness",
+    "mat.018": "Clearcoat",
+    "mat.019": "Clearcoat roughness",
+    "mat.020": "Index of refraction (IOR)",
+    "mat.021": "Transmission",
+    "mat.022": "Thickness",
+    "mat.023": "Attenuation distance (max = infinite)",
+    "mat.024": "Attenuation color",
+    "mat.025": "Sheen (cloth-like gloss)",
+    "mat.026": "Sheen roughness",
+    "mat.027": "Sheen color",
+    "mat.028": "Specular intensity",
+    "mat.029": "Specular color",
+    "mat.030": "Iridescence (rainbow film)",
+    "mat.031": "Iridescence IOR",
+    "mat.032": "Anisotropy (hairline-like reflection)",
+    "mat.033": "Anisotropy rotation",
+    "mat.034": "Dispersion (rainbow fringing)",
+    "mat.035": "Emissive color",
+    "mat.036": "The color of the effect that makes the surface itself appear to glow. It is always added regardless of lighting, so it glows even in the dark. If \"Emissive intensity\" below is 0, changing this color has no visible effect (it is raised to 1 automatically). If nothing changes even then, also turn on \"Ignore emissive map\" below.",
+    "mat.037": "Emissive intensity",
+    "mat.038": "The strength multiplied with the emissive color. While the emissive color is black, no value here changes the look.",
+    "mat.039": "Ignore emissive map",
+    "mat.040": "Many VRM models assign a nearly black \"emissive map\" texture even to parts that are not meant to glow. The shader multiplies the emissive color by this texture, so when the map is black, no change to emissive color or intensity is visible. Turning this on temporarily detaches that texture so the emissive color is applied as is (turn it off to restore the original texture).",
+    "mat.041": "Shade color (shadow color)",
+    "mat.042": "The color of areas in shadow. The bigger the difference from \"Color (lit side)\", the easier the toony effect below is to see. On models where the two colors are close, changing toony makes almost no visible difference.",
+    "mat.043": "Shading shift",
+    "mat.044": "Moves the shadow boundary (the line between light and dark) back and forth.",
+    "mat.045": "Toony",
+    "mat.046": "The width of the gradient between light and shadow. Closer to 1 gives a crisp edge (flat two-tone), closer to 0 a smoother one. The effect is only visible at the light/dark boundary, so you won't see a change from an angle where the whole body looks equally bright. Rotate the model and check at an angle with clear light/dark separation, such as the side of the face or the base of the arm. Also, on models where \"Shade color\" is close to \"Color (lit side)\", the color difference itself is small, so a crisp edge is hard to notice.",
+    "mat.047": "Rim color",
+    "mat.048": "The color of the rim that makes the silhouette appear to glow.",
+    "mat.049": "Fresnel power",
+    "mat.050": "How tightly the rim is squeezed toward the silhouette edge. Larger values concentrate it right at the edge.",
+    "mat.051": "Lift",
+    "mat.052": "How much the rim is spread toward the front as well.",
+    "mat.053": "Tint",
+    "mat.054": "The color multiplied with the MatCap texture. This app cannot assign textures, so this item only appears for materials that already have one.",
+    "mat.055": "Type",
+    "mat.056": "Width",
+    "mat.057": "In meters (for world coordinates). For a humanoid model about 1.6 m tall, 0.001–0.005 is a good range; beyond that the outline gets too thick for the body and breaks down at joints and similar spots. The slider maximum is deliberately kept low for safety.",
+    "mat.058": "Color",
+    "mat.059": "Mix with lighting",
+    "mat.060": "0: paints the outline in the plain color on the left. 1: multiplies the color by the actual shading (lighting result) at that spot, so lit areas get a bright outline and shadowed areas a dark one (only the light/dark of that spot is mixed in, not the underlying skin or clothing color; this is the intended behavior).",
+    "mat.061": "Scroll speed X",
+    "mat.062": "Speed for effects that scroll a pattern. Most VRM skin and clothing textures are not made for this, so the effect is hard to notice on ordinary models.",
+    "mat.063": "Scroll speed Y",
+    "mat.064": "Rotation speed",
+    "mat.065": "Current scroll offset X",
+    "mat.066": "The current offset itself, which keeps changing over time according to the speed above. Setting the speed back to 0 does not restore the position, so reset this to undo the offset.",
+    "mat.067": "Current scroll offset Y",
+    "mat.068": "Current rotation",
+    "mat.069": "The current rotation angle itself (radians), which keeps changing over time according to the rotation speed. Reset returns it to 0.",
+    "mat.070": "Ignore vertex colors",
+    "mat.071": "VRM0-compatible shading",
+    "mat.072": "Debug view",
+    "mat.073": "<div class=\"text-secondary small p-2\">No materials found</div>",
+    "mat.074": "All materials",
+    "mat.075": "<div class=\"text-secondary small p-2\">Please select a material</div>",
+    "mat.076": "Applies to all {0} materials of this model (opacity, transparency and alpha cutoff mean different things per part, so they can only be edited when an individual material is selected)",
+    "mat.077": "Basic",
+    "mat.078": "Surface (PBR)",
+    "mat.079": "Surface (PBR+)",
+    "mat.080": "Emissive",
+    "mat.081": "Shade (shading)",
+    "mat.082": "Rim light",
+    "mat.083": "MatCap",
+    "mat.084": "Outline",
+    "mat.085": "UV animation",
+    "mat.086": "Advanced",
+    "light.001": "Ambient light",
+    "light.002": "Hemisphere light",
+    "light.003": "Directional light",
+    "light.004": "Point light",
+    "light.005": "Spot light",
+    "light.006": "No lights. Add one with the button above.",
+    "light.007": "<i class=\"bi bi-arrows-move me-1\"></i>Edit light positions in view",
+    "light.008": "When on, a sphere marking each light's position is shown in the 3D view. Drag to move it, Shift+drag to move it in depth (a plain click just selects that light). Directional lights are drawn with a line to where they point.",
+    "light.009": "<i class=\"bi bi-plus-lg me-1\"></i>Add",
+    "light.010": "Turn this light off",
+    "light.011": "Turn this light on",
+    "light.012": "Turn only this light on and all others off",
+    "light.013": "Delete this light",
+    "light.014": "Color (sky)",
+    "light.015": "Intensity",
+    "light.016": "Color (ground)",
+    "light.017": "Position {0}",
+    "light.018": "Distance (0 = infinite)",
+    "light.019": "Decay",
+    "light.020": "Cone angle",
+    "light.021": "Penumbra (edge softness)",
+    "light.022": "Cast shadow",
+    "ctl.001": "Reset to default",
+    "ctl.002": "Show description of this item",
+    "exp.001": "This browser does not support writing to the clipboard",
+    "exp.002": "This browser does not support reading from the clipboard",
+    "exp.003": "No pose found on the clipboard. Run \"Copy to clipboard\" first",
+    "exp.004": "Please choose a pose file that contains VRMC_vrm_animation",
+    "scene.001": "Unsupported light type: {0}",
+    "vrm.001": "No VRM data found. Please choose a valid VRM file.",
+    "app.bgFailed": "Failed to load the background image/video"
+  }
+  </script>
+  <!-- three.js & three-vrm via CDN (ESM importmap) -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.min.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/",
+      "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3.5.5/lib/three-vrm.module.min.js"
+    }
+  }
+  </script>
+
+  <script type="module" src="/vrm-pose-maker/js/app.js"></script>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" defer></script>
+</body>
+</html>
