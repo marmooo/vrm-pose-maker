@@ -1,1 +1,1 @@
-let dictionary=null;function load(){try{dictionary=JSON.parse(document.getElementById("i18n").textContent)}catch{dictionary={}}}export function tr(e,...t){dictionary||load();const n=dictionary[e]??e;return n.replace(/\{(\d+)\}/g,(e,n)=>t[n]!==void 0?String(t[n]):e)}
+let dictionary=null;function load(){try{dictionary=JSON.parse(document.getElementById("i18n").textContent)}catch{dictionary={}}}export function tr(e,...t){dictionary||load();const n=dictionary[e]??e;return n.replace(/\{(\d+)\}/g,(e,n)=>t[n]!==0[0]?String(t[n]):e)}

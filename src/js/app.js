@@ -699,7 +699,7 @@ class App {
         face.classList.add("has-thumbnail");
         face.style.backgroundImage = `url(${model.thumbnail})`;
       } else {
-        face.innerHTML = '<i class="bi bi-person-circle"></i>';
+        face.innerHTML = '<svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#person-circle"/></svg>';
       }
       face.addEventListener("click", () => this._activateModel(model.id));
 
@@ -711,7 +711,7 @@ class App {
       remove.type = "button";
       remove.className = "model-chip-remove";
       remove.title = tr("app.018", model.name);
-      remove.innerHTML = '<i class="bi bi-x"></i>';
+      remove.innerHTML = '<svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#x"/></svg>';
       remove.addEventListener("click", (e) => {
         e.stopPropagation();
         this._removeModel(model.id);

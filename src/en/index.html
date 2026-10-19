@@ -57,8 +57,6 @@
 
   <!-- Bootstrap 5 -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
-  <!-- Bootstrap Icons -->
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
   <!-- Custom CSS -->
   <link href="/vrm-pose-maker/css/style.css" rel="stylesheet" />
 </head>
@@ -72,7 +70,7 @@
     </a>
     <div class="d-flex align-items-center gap-2">
       <button id="btn-load-vrm" class="btn btn-outline-body btn-sm">
-        <i class="bi bi-folder2-open me-1"></i>Load VRM
+        <svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#folder2-open"/></svg>Load VRM
       </button>
       <input type="file" id="input-vrm" accept=".vrm" multiple class="d-none" />
       <select id="lang" class="form-select form-select-sm w-auto" title="Language" aria-label="Language" onchange="changeLang()">
@@ -80,7 +78,7 @@
         <option value="en" selected>English</option>
       </select>
       <button id="btn-theme-toggle" type="button" class="btn btn-outline-body btn-sm" onclick="toggleDarkMode()" title="Toggle dark / light mode" aria-label="Toggle dark mode">
-        <i class="bi bi-sun-fill theme-icon-dark"></i><i class="bi bi-moon-stars-fill theme-icon-light"></i>
+        <svg class="theme-icon-dark" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#sun-fill"/></svg><svg class="theme-icon-light" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#moon-stars-fill"/></svg>
       </button>
     </div>
   </nav>
@@ -92,7 +90,7 @@
     <div id="panel-left" class="bg-body border-end border-secondary d-flex flex-column" style="width:220px; min-width:180px;">
       <div class="p-2 border-bottom border-secondary">
         <span class="small fw-bold text-secondary">
-          <i class="bi bi-diagram-3 me-1"></i>Bones
+          <svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#diagram-3"/></svg>Bones
         </span>
       </div>
       <div id="bone-list-container" class="flex-grow-1 overflow-auto p-1">
@@ -104,7 +102,7 @@
     <div id="canvas-wrapper" class="flex-grow-1 d-flex flex-column position-relative">
       <!-- Drag & drop overlay -->
       <div id="drop-overlay" class="d-none" aria-hidden="true">
-        <div class="drop-overlay-box"><i class="bi bi-box-arrow-in-down me-2"></i>Drop here<div class="small mt-1">.vrm (add model) / .glb, .fbx, .vrma (pose) / .vrmposer.json (project) / image, video (background)</div></div>
+        <div class="drop-overlay-box"><svg class="me-2" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#box-arrow-in-down"/></svg>Drop here<div class="small mt-1">.vrm (add model) / .glb, .fbx, .vrma (pose) / .vrmposer.json (project) / image, video (background)</div></div>
       </div>
 
       <!-- Loading overlay -->
@@ -138,23 +136,23 @@
         <div class="btn-group btn-group-sm w-100" role="group" aria-label="Switch right panel">
           <input type="radio" class="btn-check" name="right-panel-tab" id="tab-model" autocomplete="off">
           <label class="btn btn-outline-primary" for="tab-model" title="Models & poses">
-            <i class="bi bi-people"></i>
+            <svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#people"/></svg>
           </label>
           <input type="radio" class="btn-check" name="right-panel-tab" id="tab-bone" autocomplete="off" checked>
           <label class="btn btn-outline-primary" for="tab-bone" title="Bones">
-            <i class="bi bi-person-arms-up"></i>
+            <svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#person-arms-up"/></svg>
           </label>
           <input type="radio" class="btn-check" name="right-panel-tab" id="tab-expression" autocomplete="off">
           <label class="btn btn-outline-primary" for="tab-expression" title="Expressions">
-            <i class="bi bi-emoji-smile"></i>
+            <svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#emoji-smile"/></svg>
           </label>
           <input type="radio" class="btn-check" name="right-panel-tab" id="tab-material" autocomplete="off">
           <label class="btn btn-outline-primary" for="tab-material" title="Materials">
-            <i class="bi bi-palette2"></i>
+            <svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#palette2"/></svg>
           </label>
           <input type="radio" class="btn-check" name="right-panel-tab" id="tab-scene" autocomplete="off">
           <label class="btn btn-outline-primary" for="tab-scene" title="Background & lights">
-            <i class="bi bi-image"></i>
+            <svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#image"/></svg>
           </label>
         </div>
       </div>
@@ -162,7 +160,7 @@
       <!-- Models & poses tab -->
       <div id="panel-tab-model" class="d-none flex-column flex-grow-1 overflow-hidden">
         <div class="p-2 border-bottom border-secondary">
-          <div class="small fw-bold text-secondary mb-2"><i class="bi bi-people me-1"></i>Models & poses</div>
+          <div class="small fw-bold text-secondary mb-2"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#people"/></svg>Models & poses</div>
           <div class="small text-secondary">Model being edited</div>
           <div id="active-model-name" class="active-model-name text-truncate">Please load a model</div>
         </div>
@@ -171,17 +169,17 @@
           <div id="model-list" class="model-list"><div class="text-secondary small">No models</div></div>
         </div>
         <div class="flex-grow-1 overflow-auto p-2">
-          <button id="btn-model-add" class="btn btn-sm btn-outline-body w-100 mb-3"><i class="bi bi-plus-lg me-1"></i>Add VRM</button>
+          <button id="btn-model-add" class="btn btn-sm btn-outline-body w-100 mb-3"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#plus-lg"/></svg>Add VRM</button>
           <div class="small text-secondary mb-1">Pose of the selected model</div>
           <div class="d-grid gap-2">
-            <button id="btn-load-pose" class="btn btn-sm btn-outline-warning" disabled title="Load a GLB / FBX / VRMA file"><i class="bi bi-upload me-1"></i>Load pose</button>
-            <button id="btn-toggle-animation" class="btn btn-sm btn-outline-info" disabled><i class="bi bi-pause-fill me-1"></i>Pause animation</button>
+            <button id="btn-load-pose" class="btn btn-sm btn-outline-warning" disabled title="Load a GLB / FBX / VRMA file"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#upload"/></svg>Load pose</button>
+            <button id="btn-toggle-animation" class="btn btn-sm btn-outline-info" disabled><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#pause-fill"/></svg>Pause animation</button>
             <select id="select-random-animation" class="form-select form-select-sm" disabled title="Poses targeted by random playback. The pose currently playing is selected; choose another to switch to it"><option value="">(Loading pose list…)</option></select>
-            <button id="btn-random-animation" class="btn btn-sm btn-outline-info" disabled><i class="bi bi-shuffle me-1"></i>Random pose playback</button>
-            <button id="btn-save-vrma" class="btn btn-sm btn-outline-warning" disabled title="Save the current pose as .vrma"><i class="bi bi-download me-1"></i>Save pose</button>
-            <button id="btn-copy-pose" class="btn btn-sm btn-outline-warning" disabled><i class="bi bi-clipboard me-1"></i>Copy pose to clipboard</button>
-            <button id="btn-paste-pose" class="btn btn-sm btn-outline-warning" disabled><i class="bi bi-clipboard-check me-1"></i>Paste pose from clipboard</button>
-            <button id="btn-reset-pose" class="btn btn-sm btn-outline-secondary" disabled><i class="bi bi-arrow-counterclockwise me-1"></i>Reset pose</button>
+            <button id="btn-random-animation" class="btn btn-sm btn-outline-info" disabled><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#shuffle"/></svg>Random pose playback</button>
+            <button id="btn-save-vrma" class="btn btn-sm btn-outline-warning" disabled title="Save the current pose as .vrma"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#download"/></svg>Save pose</button>
+            <button id="btn-copy-pose" class="btn btn-sm btn-outline-warning" disabled><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#clipboard"/></svg>Copy pose to clipboard</button>
+            <button id="btn-paste-pose" class="btn btn-sm btn-outline-warning" disabled><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#clipboard-check"/></svg>Paste pose from clipboard</button>
+            <button id="btn-reset-pose" class="btn btn-sm btn-outline-secondary" disabled><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#arrow-counterclockwise"/></svg>Reset pose</button>
           </div>
           <input type="file" id="input-pose" accept=".glb,.fbx,.vrma" class="d-none" />
         </div>
@@ -192,30 +190,30 @@
       <div class="p-2 border-bottom border-secondary">
         <div class="d-flex align-items-center justify-content-between">
           <span class="small fw-bold text-secondary">
-            <i class="bi bi-sliders me-1"></i>Bone rotation
+            <svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#sliders"/></svg>Bone rotation
           </span>
           <button type="button" class="btn btn-sm btn-link text-secondary p-0"
                   data-bs-toggle="collapse" data-bs-target="#bone-controls-help"
                   aria-expanded="false" aria-controls="bone-controls-help"
                   title="Show controls help">
-            <i class="bi bi-question-circle"></i>
+            <svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#question-circle"/></svg>
           </button>
         </div>
 
         <div class="btn-group btn-group-sm w-100 mt-2" role="group" aria-label="Manipulation mode">
           <input type="radio" class="btn-check" name="manip-mode" id="manip-mode-sphere" autocomplete="off" checked>
           <label class="btn btn-outline-primary" for="manip-mode-sphere">
-            <i class="bi bi-circle me-1"></i>Sphere
+            <svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#circle"/></svg>Sphere
           </label>
           <input type="radio" class="btn-check" name="manip-mode" id="manip-mode-gizmo" autocomplete="off">
           <label class="btn btn-outline-primary" for="manip-mode-gizmo">
-            <i class="bi bi-bounding-box-circles me-1"></i>Gizmo
+            <svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#bounding-box-circles"/></svg>Gizmo
           </label>
         </div>
 
         <div class="collapse mt-2" id="bone-controls-help">
           <div id="bone-controls-help-body" class="small bone-help-scroll">
-            <div class="fw-bold text-body mb-1"><i class="bi bi-mouse me-1"></i>PC (mouse)</div>
+            <div class="fw-bold text-body mb-1"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#mouse"/></svg>PC (mouse)</div>
             <ul class="mb-2 ps-3">
               <li>Left-drag the model (outside sphere/gizmo): move the model</li>
               <li>Left-drag (outside model, sphere and gizmo): rotate camera</li>
@@ -225,7 +223,7 @@
               <li>Right-click (inside sphere/gizmo, no movement): switch to parent bone</li>
               <li>Left-click (yellow center dot): toggle control target</li>
             </ul>
-            <div class="fw-bold text-body mb-1"><i class="bi bi-tablet me-1"></i>Tablet (touch)</div>
+            <div class="fw-bold text-body mb-1"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#tablet"/></svg>Tablet (touch)</div>
             <ul class="mb-0 ps-3">
               <li>One-finger drag (on the model): move the model</li>
               <li>One-finger drag (outside model, sphere and gizmo): rotate camera</li>
@@ -247,10 +245,10 @@
       <div id="panel-tab-expression" class="d-none flex-column flex-grow-1 overflow-hidden">
         <div class="p-2 border-bottom border-secondary d-flex align-items-center justify-content-between">
           <span class="small fw-bold text-secondary">
-            <i class="bi bi-emoji-smile me-1"></i>Expressions
+            <svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#emoji-smile"/></svg>Expressions
           </span>
           <button type="button" id="btn-reset-expressions" class="btn btn-sm btn-outline-secondary" title="Reset all expressions">
-            <i class="bi bi-arrow-counterclockwise"></i>
+            <svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#arrow-counterclockwise"/></svg>
           </button>
         </div>
         <div id="expression-controls" class="flex-grow-1 overflow-auto p-2">
@@ -262,7 +260,7 @@
       <div id="panel-tab-scene" class="d-none flex-column flex-grow-1 overflow-hidden">
         <div class="p-2 border-bottom border-secondary">
           <span class="small fw-bold text-secondary">
-            <i class="bi bi-image me-1"></i>Background & floor
+            <svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#image"/></svg>Background & floor
           </span>
         </div>
         <div class="flex-grow-1 overflow-auto p-2">
@@ -274,7 +272,7 @@
             <label class="form-label small text-secondary mb-1" for="bg-image">Background image / video</label>
             <input type="file" id="bg-image" class="form-control form-control-sm" accept="image/*,video/*">
             <button type="button" id="btn-clear-bg-image" class="btn btn-sm btn-outline-secondary w-100 mt-1">
-              <i class="bi bi-x-circle me-1"></i>Remove image/video and use color
+              <svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#x-circle"/></svg>Remove image/video and use color
             </button>
           </div>
           <div class="form-check form-switch mb-3">
@@ -282,7 +280,7 @@
             <label class="form-check-label small" for="toggle-grid">Show floor grid</label>
           </div>
           <hr class="border-secondary">
-          <div class="small fw-bold text-secondary mb-2"><i class="bi bi-lightbulb me-1"></i>Lights</div>
+          <div class="small fw-bold text-secondary mb-2"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#lightbulb"/></svg>Lights</div>
           <div id="light-controls"></div>
         </div>
       </div>
@@ -291,7 +289,7 @@
       <div id="panel-tab-material" class="d-none flex-column flex-grow-1 overflow-hidden">
         <div class="p-2 border-bottom border-secondary">
           <span class="small fw-bold text-secondary">
-            <i class="bi bi-palette2 me-1"></i>Materials
+            <svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#palette2"/></svg>Materials
           </span>
           <select id="material-select" class="form-select form-select-sm mt-2" disabled></select>
         </div>
@@ -306,15 +304,15 @@
   <!-- Footer: Action Buttons -->
   <div id="footer" class="bg-body-tertiary border-top border-secondary px-3 py-2 flex-shrink-0 d-flex flex-wrap gap-2 align-items-center">
     <button id="btn-load-project" class="btn btn-outline-primary btn-sm">
-      <i class="bi bi-upload me-1"></i>Load project
+      <svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#upload"/></svg>Load project
     </button>
     <button id="btn-save-project" class="btn btn-outline-primary btn-sm" disabled>
-      <i class="bi bi-download me-1"></i>Save project
+      <svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#download"/></svg>Save project
     </button>
     <input type="file" id="input-project" accept=".json,.vrmposer.json" class="d-none" />
     <div class="vr mx-1"></div>
     <button id="btn-screenshot" class="btn btn-outline-body btn-sm" disabled>
-      <i class="bi bi-camera me-1"></i>Screenshot
+      <svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#camera"/></svg>Screenshot
     </button>
     <select id="screenshot-scale" class="form-select form-select-sm w-auto" title="Screenshot size (multiplier of the current view; capped by the browser/GPU limit)" aria-label="Screenshot scale">
       <option value="1" selected>×1</option>
@@ -360,8 +358,8 @@
     "app.027": "[vrm-pose-app] Unmapped bones: {0}",
     "app.028": "{0}: Could not find enough bones matching the VRM (unmapped bone names, e.g.: {1})",
     "app.029": "{0}: Could not find enough bones matching the VRM",
-    "app.030": "<i class=\"bi bi-pause-fill me-1\"></i>Pause animation",
-    "app.031": "<i class=\"bi bi-play-fill me-1\"></i>Play animation",
+    "app.030": "<svg class=\"me-1\" width=\"1em\" height=\"1em\" fill=\"currentColor\" aria-hidden=\"true\"><use href=\"/vrm-pose-maker/icons/bootstrap-icons.svg#pause-fill\"/></svg>Pause animation",
+    "app.031": "<svg class=\"me-1\" width=\"1em\" height=\"1em\" fill=\"currentColor\" aria-hidden=\"true\"><use href=\"/vrm-pose-maker/icons/bootstrap-icons.svg#play-fill\"/></svg>Play animation",
     "app.032": "Failed to fetch the animation list",
     "app.033": "Select a pose…",
     "app.034": "Could not fetch {0}",
@@ -369,8 +367,8 @@
     "app.036": "The animation list is empty. Put .fbx / .glb / .vrma files in the animations folder and generate list.txt",
     "app.037": "Could not load {0}. Continuing random playback",
     "app.038": "Random pose playback failed",
-    "app.039": "<i class=\"bi bi-stop-fill me-1\"></i>Stop random pose playback",
-    "app.040": "<i class=\"bi bi-shuffle me-1\"></i>Random pose playback",
+    "app.039": "<svg class=\"me-1\" width=\"1em\" height=\"1em\" fill=\"currentColor\" aria-hidden=\"true\"><use href=\"/vrm-pose-maker/icons/bootstrap-icons.svg#stop-fill\"/></svg>Stop random pose playback",
+    "app.040": "<svg class=\"me-1\" width=\"1em\" height=\"1em\" fill=\"currentColor\" aria-hidden=\"true\"><use href=\"/vrm-pose-maker/icons/bootstrap-icons.svg#shuffle\"/></svg>Random pose playback",
     "app.041": "<div class=\"text-secondary small p-2\">Please load a VRM</div>",
     "app.042": "Removed {0} from the scene",
     "app.043": "Pinning the selected bone as a hinge and moving everything from its parent bone \"{0}\" upward",
@@ -459,13 +457,13 @@
     "ui.078": "Look: left",
     "ui.079": "Look: right",
     "ui.080": "<div class=\"text-secondary small p-2\">Please select a bone</div>",
-    "ui.081": "<i class=\"bi bi-arrow-counterclockwise\"></i> Reset",
+    "ui.081": "<svg width=\"1em\" height=\"1em\" fill=\"currentColor\" aria-hidden=\"true\"><use href=\"/vrm-pose-maker/icons/bootstrap-icons.svg#arrow-counterclockwise\"/></svg> Reset",
     "ui.082": "Reset this bone's rotation and position",
-    "ui.083": "<i class=\"bi bi-symmetry-vertical me-1\"></i>Mirror to \"{0}\"",
+    "ui.083": "<svg class=\"me-1\" width=\"1em\" height=\"1em\" fill=\"currentColor\" aria-hidden=\"true\"><use href=\"/vrm-pose-maker/icons/bootstrap-icons.svg#symmetry-vertical\"/></svg>Mirror to \"{0}\"",
     "ui.084": "Copies the pose of this bone and its descendants (down to the hand and fingers for an arm) to the opposite side.",
-    "ui.085": "<i class=\"bi bi-arrow-up-circle me-1\"></i>To parent bone ({0})",
+    "ui.085": "<svg class=\"me-1\" width=\"1em\" height=\"1em\" fill=\"currentColor\" aria-hidden=\"true\"><use href=\"/vrm-pose-maker/icons/bootstrap-icons.svg#arrow-up-circle\"/></svg>To parent bone ({0})",
     "ui.086": "Switches the selection itself to the parent bone toward the root (the sphere moves too). This is separate from the \"control target toggle\" (clicking the center of the sphere).",
-    "ui.087": "<i class=\"bi bi-info-circle me-1\"></i>This is the root-most bone",
+    "ui.087": "<svg class=\"me-1\" width=\"1em\" height=\"1em\" fill=\"currentColor\" aria-hidden=\"true\"><use href=\"/vrm-pose-maker/icons/bootstrap-icons.svg#info-circle\"/></svg>This is the root-most bone",
     "ui.088": "Reset the {0} axis only",
     "ui.089": "<div class=\"text-secondary small p-2\">This VRM has no expressions</div>",
     "ui.090": "Reset this expression to 0",
@@ -561,9 +559,9 @@
     "light.004": "Point light",
     "light.005": "Spot light",
     "light.006": "No lights. Add one with the button above.",
-    "light.007": "<i class=\"bi bi-arrows-move me-1\"></i>Edit light positions in view",
+    "light.007": "<svg class=\"me-1\" width=\"1em\" height=\"1em\" fill=\"currentColor\" aria-hidden=\"true\"><use href=\"/vrm-pose-maker/icons/bootstrap-icons.svg#arrows-move\"/></svg>Edit light positions in view",
     "light.008": "When on, a sphere marking each light's position is shown in the 3D view. Drag to move it, Shift+drag to move it in depth (a plain click just selects that light). Directional lights are drawn with a line to where they point.",
-    "light.009": "<i class=\"bi bi-plus-lg me-1\"></i>Add",
+    "light.009": "<svg class=\"me-1\" width=\"1em\" height=\"1em\" fill=\"currentColor\" aria-hidden=\"true\"><use href=\"/vrm-pose-maker/icons/bootstrap-icons.svg#plus-lg\"/></svg>Add",
     "light.010": "Turn this light off",
     "light.011": "Turn this light on",
     "light.012": "Turn only this light on and all others off",

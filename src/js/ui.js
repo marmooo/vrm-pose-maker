@@ -326,7 +326,7 @@ export class UIManager {
     const axisResetBtn = document.createElement("button");
     axisResetBtn.type = "button";
     axisResetBtn.className = "btn btn-sm btn-outline-secondary axis-reset-btn";
-    axisResetBtn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i>';
+    axisResetBtn.innerHTML = '<svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#arrow-counterclockwise"/></svg>';
     axisResetBtn.title = tr("ui.088", axis.toUpperCase());
     axisResetBtn.addEventListener("click", () => {
       this._callbacks.onAxisReset(boneName, axis);
@@ -429,7 +429,7 @@ export class UIManager {
       const resetBtn = document.createElement("button");
       resetBtn.type = "button";
       resetBtn.className = "btn btn-sm btn-outline-secondary";
-      resetBtn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i>';
+      resetBtn.innerHTML = '<svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#arrow-counterclockwise"/></svg>';
       resetBtn.title = tr("ui.090");
 
       labelRow.appendChild(nameLabel);

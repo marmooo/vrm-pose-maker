@@ -12,7 +12,7 @@ function createResetButton(onClick, title = tr("ctl.001")) {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "btn btn-sm btn-outline-secondary control-reset-btn";
-  btn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i>';
+  btn.innerHTML = '<svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#arrow-counterclockwise"/></svg>';
   btn.title = title;
   btn.addEventListener("click", onClick);
   return btn;
