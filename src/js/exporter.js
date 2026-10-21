@@ -1,5 +1,5 @@
 /** VRMA / project export helpers */
-import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { createGLTFLoader } from "./gltf-loader.js";
 import { ALL_BONE_NAMES } from "./bone-hierarchy.js";
 
 import { tr } from "./i18n.js";
@@ -182,7 +182,7 @@ export class Exporter {
     // (ランダム再生で何百回も読み込んでも、メモリを無駄に使わず速く読める)。
     const data = Exporter._stripGltfGeometry(await file.arrayBuffer());
     return new Promise((resolve, reject) =>
-      new GLTFLoader().parse(data, "", resolve, reject)
+      createGLTFLoader().parse(data, "", resolve, reject)
     );
   }
   /** glTF の JSON からメッシュ・スキン・マテリアル・テクスチャ・画像を取り除く(アニメーションとノードは残す)。 */
@@ -347,6 +347,13 @@ export class Exporter {
   ) {
     const a = document.createElement("a");
     a.href = sceneManager.getScreenshot(options);
+    a.download = filename;
+    a.click();
+  }
+  /** data URL の画像をそのままファイルとして保存する(ダウンロードを始める)。 */
+  static saveImage(dataUrl, filename) {
+    const a = document.createElement("a");
+    a.href = dataUrl;
     a.download = filename;
     a.click();
   }

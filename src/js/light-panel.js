@@ -217,14 +217,16 @@ export class LightPanel {
     const soloBtn = document.createElement("button");
     soloBtn.type = "button";
     soloBtn.className = "btn btn-sm btn-outline-warning";
-    soloBtn.innerHTML = '<svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#bullseye"/></svg>';
+    soloBtn.innerHTML =
+      '<svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#bullseye"/></svg>';
     soloBtn.title = tr("light.012");
     soloBtn.addEventListener("click", () => this._solo(id));
 
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
     removeBtn.className = "btn btn-sm btn-outline-danger";
-    removeBtn.innerHTML = '<svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#trash"/></svg>';
+    removeBtn.innerHTML =
+      '<svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#trash"/></svg>';
     removeBtn.title = tr("light.013");
     removeBtn.addEventListener("click", () => {
       this._scene.removeLight(id);

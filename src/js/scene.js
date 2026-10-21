@@ -10,6 +10,10 @@ import { tr } from "./i18n.js";
 const MAX_PIXEL_RATIO = 2;
 // スクリーンショットの一辺の上限(px)。GPU/ブラウザの描画バッファ上限に引っかからないようにする
 const MAX_SCREENSHOT_SIDE = 8192;
+// 半身・全身の撮影(captureFramed)の画角(縦方向, 度)。望遠寄りにして遠近の歪みを抑える
+const FRAME_FOV = 20;
+// 撮影構図の余白(被写体の高さに対する倍率)。1.1 なら上下に5%ずつ余白が出る
+const FRAME_MARGIN = 1.1;
 
 const THEME_BACKGROUND = { dark: "#1a1a2e", light: "#e9edf3" };
 const THEME_GRID = { dark: [0x333333, 0x222222], light: [0x9aa3af, 0xc3cad3] };
@@ -24,7 +28,9 @@ export class SceneManager {
     this.currentVrm = null;
     this.vrms = [];
     this._animationId = null;
-    this._clock = new THREE.Clock();
+    // THREE.Clock は非推奨。Timer は、タブを隠していた間の時間を delta に含めない(connect)
+    this._timer = new THREE.Timer();
+    this._timer.connect(document);
     this._animationMixers = new Set();
 
     this._init();
@@ -118,7 +124,8 @@ export class SceneManager {
 
   _animate() {
     this._animationId = requestAnimationFrame(() => this._animate());
-    const delta = this._clock.getDelta();
+    this._timer.update();
+    const delta = this._timer.getDelta();
 
     for (const vrm of this.vrms) vrm.update(delta);
     // 編集中でないモデルのアニメーションも止めずに再生し続けるため、
@@ -237,10 +244,154 @@ export class SceneManager {
   }
 
   /**
+   * 指定した VRM を正面から、決まった構図で撮影した透過 PNG(データURL)を返す。
+   * 現在のポーズ・表情のまま撮る。モデル選択画面のサムネイル用(半身=一覧、全身=プレビュー)。
+   * captureFaceThumbnail と同様、メインのレンダラーでオフスクリーンに描画するので、
+   * 画面の表示(カメラ・サイズ)は変わらない。
+   *
+   * @param {import('@pixiv/three-vrm').VRM} vrm
+   * @param {"portrait"|"fullBody"} mode
+   *   portrait: 頭頂〜腰あたりまで(半身)。fullBody: 全身が収まる構図。
+   * @param {number} width - 出力画像の幅(px)
+   * @param {number} height - 出力画像の高さ(px)
+   * @returns {string|null} data URL (image/png)。撮影できない(形状が空など)場合は null。
+   */
+  captureFramed(vrm, mode, width = 600, height = 800) {
+    if (!vrm) return null;
+
+    // 現在のポーズでの最新の形状から範囲を求める。precise=true にしないと、スキンメッシュは
+    // 初期姿勢(Tポーズ等)のままの範囲になり、しゃがみなどのポーズで構図がずれる。
+    vrm.scene.updateWorldMatrix(true, true);
+    const box = new THREE.Box3().setFromObject(vrm.scene, true);
+    if (box.isEmpty()) return null;
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+
+    const tanHalfFov = Math.tan(THREE.MathUtils.degToRad(FRAME_FOV / 2));
+    const aspect = width / height;
+    const top = box.max.y;
+    let bottom;
+    let targetX = center.x;
+    let targetZ = center.z;
+    let minWidth = 0;
+    if (mode === "portrait") {
+      const hipsNode = vrm.humanoid?.getNormalizedBoneNode("hips");
+      const headNode = vrm.humanoid?.getNormalizedBoneNode("head");
+      const hipsY = hipsNode
+        ? hipsNode.getWorldPosition(new THREE.Vector3()).y
+        : top - size.y * 0.55;
+      bottom = hipsY; // 腰(hips ボーン)の高さまで。これより下げると脚の付け根が写る
+      if (headNode) {
+        // 左右・奥行きは顔の位置に合わせる(腕を広げたポーズでも顔が中央に来る)
+        const headPos = headNode.getWorldPosition(new THREE.Vector3());
+        targetX = headPos.x;
+        targetZ = headPos.z;
+      }
+    } else {
+      bottom = box.min.y;
+      minWidth = size.x * 1.06; // 腕を広げたポーズでも左右が切れないようにする
+    }
+
+    // 縦に収める距離と、(全身のとき)横に収める距離の大きいほうを採用する
+    const frameHeight = Math.max(top - bottom, size.y * 0.3) * FRAME_MARGIN;
+    let distance = Math.max(
+      frameHeight / 2 / tanHalfFov,
+      minWidth / 2 / (tanHalfFov * aspect),
+    );
+    distance += size.z * 0.5; // 注視点は奥行きの中央なので、手前側が大きく写る分だけ引く
+
+    // モデルが向いている方向(ワールド空間, 水平面内)に回り込む。VRM0 は読込時に
+    // 180度回して +Z 向きに揃えているため、向きの基準がローカルでは -Z になる。
+    const localFront = new THREE.Vector3(
+      0,
+      0,
+      vrm.meta?.metaVersion === "0" ? -1 : 1,
+    );
+    const front = localFront.applyQuaternion(
+      vrm.scene.getWorldQuaternion(new THREE.Quaternion()),
+    );
+    front.y = 0;
+    if (front.lengthSq() < 1e-6) front.set(0, 0, 1);
+    front.normalize();
+
+    const target = new THREE.Vector3(targetX, (top + bottom) / 2, targetZ);
+    if (!this._frameCamera) this._frameCamera = new THREE.PerspectiveCamera();
+    const camera = this._frameCamera;
+    camera.fov = FRAME_FOV;
+    camera.aspect = aspect;
+    camera.near = 0.05;
+    camera.far = distance + size.length() + 10;
+    camera.up.set(0, 1, 0);
+    camera.position.copy(target).addScaledVector(front, distance);
+    camera.lookAt(target);
+    camera.updateProjectionMatrix();
+
+    if (
+      !this._frameTarget ||
+      this._frameTarget.width !== width ||
+      this._frameTarget.height !== height
+    ) {
+      this._frameTarget?.dispose();
+      this._frameTarget = new THREE.WebGLRenderTarget(width, height, {
+        samples: 4,
+        type: THREE.UnsignedByteType,
+      });
+    }
+
+    // 他のモデル・床グリッド・操作用の補助表示・背景・フォグは写さない(透過PNGにする)
+    const others = this.vrms.filter((v) => v !== vrm);
+    const overlays = [this.boneSphere?._group, this.lightGizmo?._group].filter(
+      Boolean,
+    );
+    const hidden = [...others.map((v) => v.scene), ...overlays];
+    const prevVisible = hidden.map((o) => o.visible);
+    hidden.forEach((o) => {
+      o.visible = false;
+    });
+    const prevGridVisible = this._grid?.visible;
+    if (this._grid) this._grid.visible = false;
+    const prevBackground = this.scene.background;
+    const prevFog = this.scene.fog;
+    this.scene.background = null;
+    this.scene.fog = null;
+
+    const renderer = this.renderer;
+    const prevClearColor = renderer.getClearColor(new THREE.Color());
+    const prevClearAlpha = renderer.getClearAlpha();
+    try {
+      renderer.setRenderTarget(this._frameTarget);
+      renderer.setClearColor(0x000000, 0);
+      renderer.render(this.scene, camera);
+      const pixels = new Uint8Array(width * height * 4);
+      renderer.readRenderTargetPixels(
+        this._frameTarget,
+        0,
+        0,
+        width,
+        height,
+        pixels,
+      );
+      return SceneManager._pixelsToDataUrl(pixels, width, height);
+    } finally {
+      renderer.setRenderTarget(null);
+      renderer.setClearColor(prevClearColor, prevClearAlpha);
+      hidden.forEach((o, i) => {
+        o.visible = prevVisible[i];
+      });
+      if (this._grid) this._grid.visible = prevGridVisible;
+      this.scene.background = prevBackground;
+      this.scene.fog = prevFog;
+    }
+  }
+
+  /**
    * オフスクリーン描画の結果(リニア色・上下反転・RGBA)を、sRGB の PNG(data URL)に変換する。
    * 描画先がレンダーターゲットのときは three.js が sRGB へ変換しないので、ここで変換する。
+   * @param {Uint8Array} pixels
+   * @param {number} width
+   * @param {number} [height] - 省略すると正方形(width x width)
    */
-  static _pixelsToDataUrl(pixels, size) {
+  static _pixelsToDataUrl(pixels, width, height = width) {
     if (!SceneManager._linearToSrgbLut) {
       const lut = new Uint8Array(256);
       for (let i = 0; i < 256; i++) {
@@ -254,12 +405,13 @@ export class SceneManager {
     }
     const lut = SceneManager._linearToSrgbLut;
     const canvas = document.createElement("canvas");
-    canvas.width = canvas.height = size;
+    canvas.width = width;
+    canvas.height = height;
     const ctx = canvas.getContext("2d");
-    const image = ctx.createImageData(size, size);
-    const row = size * 4;
-    for (let y = 0; y < size; y++) {
-      const src = (size - 1 - y) * row; // 下から上へ並んでいるので上下を反転して詰める
+    const image = ctx.createImageData(width, height);
+    const row = width * 4;
+    for (let y = 0; y < height; y++) {
+      const src = (height - 1 - y) * row; // 下から上へ並んでいるので上下を反転して詰める
       const dst = y * row;
       for (let x = 0; x < row; x += 4) {
         image.data[dst + x] = lut[pixels[src + x]];
@@ -707,5 +859,7 @@ export class SceneManager {
     for (const entry of this.lights) this._disposeLight(entry.light);
     this.renderer.dispose();
     this._thumbTarget?.dispose();
+    this._frameTarget?.dispose();
+    this._timer.disconnect();
   }
 }

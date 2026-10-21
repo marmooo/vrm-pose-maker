@@ -2,13 +2,13 @@
  * vrm-loader.js - VRM ファイル読込ロジック
  */
 import * as THREE from "three";
-import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { VRMLoaderPlugin, VRMUtils } from "@pixiv/three-vrm";
 
 import { tr } from "./i18n.js";
+import { createGLTFLoader } from "./gltf-loader.js";
 export class VrmLoader {
   constructor() {
-    this._loader = new GLTFLoader();
+    this._loader = createGLTFLoader(); // Draco 圧縮された VRM も読める
     this._loader.register((parser) => new VRMLoaderPlugin(parser));
   }
 

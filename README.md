@@ -11,7 +11,8 @@ Open `src/index.html` in a browser (served over `http://`/`https://`, not
 ## Features
 
 - Load one or more VRM models into the same scene, switch between them via the
-  face-icon chips in the sidebar.
+  face-icon chips in the sidebar. A start-up picker offers the bundled models
+  (see "Bundled models" below), or you can choose a file from your device.
 - Pose bones by dragging in 3D (sphere or gizmo manipulation mode).
 - Load poses/animations from a `.glb`, `.fbx` or `.vrma` file with one button
   ("ポーズ読込", the format is detected from the extension), and pause on a good
@@ -25,10 +26,69 @@ Open `src/index.html` in a browser (served over `http://`/`https://`, not
   and material appearance (every parameter of three-vrm's MToon shader, plus the
   common properties of non-MToon/fallback PBR materials) — see "Lights and
   materials" below.
+- Draco-compressed (`KHR_draco_mesh_compression`) VRM / GLB files load too. The
+  decoder is fetched from the same CDN and version as three.js the first time a
+  compressed mesh is loaded, so uncompressed models are not affected.
 - Adjust facial expressions.
 - Edit background color/image and toggle the floor grid.
 - Save/load a pose, save/load a whole project, copy/paste a pose via the
   clipboard, and take a screenshot.
+
+## Bundled models (start-up picker)
+
+If `vrm/list.txt` exists, a modal listing the bundled models opens at start-up
+(and when you press "VRM読込" / "Add VRM"; it also has a "choose a file from this
+device" button). Only the thumbnails are fetched while browsing the list — a
+model's `.vrm` is downloaded only after you choose it.
+
+Put the files in `src/vrm/` (sub-folders are fine) using this naming:
+
+```
+src/vrm/
+  1.vrm              the model
+  1_portrait.png     thumbnail shown in the list (waist-up, 3:4)   — optional
+  1_full_body.png    larger preview shown when selected (3:4)      — optional
+  list.txt           generated, see below
+```
+
+- Thumbnails may be **any image format** (`png`, `webp`, `avif`, `jpg`, `gif`,
+  `bmp`, `svg`). If the same thumbnail exists in several formats the lighter one
+  is used (`avif` > `webp` > `png` > `jpg` …), so converting a PNG to WebP and
+  keeping both files is fine.
+- Either thumbnail may be missing: the other one is used, and a placeholder icon
+  is shown when there is neither.
+- Generate the list (re-run whenever you add, remove or rename files):
+
+  ```
+  deno run --allow-read --allow-write scripts/generate-vrm-list.ts
+  ```
+
+  It writes `src/vrm/list.txt` (one relative path per line, natural sort order,
+  so `2` comes before `10`) and warns about models without thumbnails. The list
+  location is set by `data-vrm-list` on `<body>` in each language's HTML. Without
+  a list the app behaves as before (a file dialog).
+
+### Making the thumbnails
+
+The footer has two buttons, "半身撮影" (Portrait shot) and "全身撮影" (Full-body
+shot). They photograph the model being edited from the front, in its **current
+pose and expression**, and save a transparent 600×800 PNG (twice VRoid Hub's
+300×400) named `<model>_portrait.png` / `<model>_full_body.png` — exactly the
+names above. The camera is framed automatically: the portrait runs from the top
+of the head to the waist (the hips bone), the full-body shot fits the whole body
+including outstretched arms. The on-screen view is not touched, and other
+models, the floor grid and the editing overlays are left out. Pose the model
+first (reset the pose for a neutral stance) and drop the files into `src/vrm/`.
+
+If a VRM already contains an embedded thumbnail, you can extract it as a starting
+point (VRM0 and VRM1 are both supported; a VRM can hold only one):
+
+```
+deno run --allow-read --allow-write scripts/extract-vrm-thumbnail.ts model.vrm [more.vrm ...] [--out-dir dir]
+```
+
+`docs/` is the generated site (`build.sh` copies and minifies `src/`), so run
+`build.sh` after adding models.
 
 ## Saving and loading poses
 

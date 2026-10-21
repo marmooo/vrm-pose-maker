@@ -24,7 +24,16 @@ import {
   MaterialPanel,
 } from "./material-panel.js";
 
+import { ModelPicker } from "./model-picker.js";
+
 import { tr } from "./i18n.js";
+// 起動時・「VRM読込」で開くモデル選択モーダルが読む一覧(vrm/list.txt)のURL。
+// 一覧が無い(404)ときはモーダルを出さず、従来どおりファイル選択ダイアログを開く。
+// 場所は言語ごとのHTML(<body data-vrm-list>)で指定する(ページの置き場所に依存するため)
+const MODEL_LIST_URL = document.body.dataset.vrmList || "../vrm/list.txt";
+// 半身・全身撮影ボタンで保存する画像のサイズ(px)。VRoid Hub の 300x400 の2倍(3:4)
+const FRAME_CAPTURE_WIDTH = 600;
+const FRAME_CAPTURE_HEIGHT = 800;
 // 背景に使える画像/動画の拡張子(MIMEタイプが取れない場合の判定用)
 const BACKGROUND_EXTENSIONS =
   /\.(png|jpe?g|gif|webp|avif|bmp|mp4|webm|mov|m4v|ogv)$/i;
@@ -80,6 +89,8 @@ class App {
     this._activeModelName = document.getElementById("active-model-name");
     this._vrmFile = null;
     this._btnScreenshot = document.getElementById("btn-screenshot");
+    this._btnCapturePortrait = document.getElementById("btn-capture-portrait");
+    this._btnCaptureFullBody = document.getElementById("btn-capture-full-body");
     this._btnResetPose = document.getElementById("btn-reset-pose");
     this._btnCopyPose = document.getElementById("btn-copy-pose");
     this._btnPastePose = document.getElementById("btn-paste-pose");
@@ -163,12 +174,31 @@ class App {
       },
     );
 
+    // 同梱モデルの選択モーダル(一覧が読めたときだけ使う)
+    this._modelPicker = new ModelPicker({
+      listUrl: MODEL_LIST_URL,
+      onLoad: (entry) => this._loadVrmFromUrl(entry),
+      onChooseDevice: () => this._inputVrm.click(),
+    });
+
     this._bindEvents();
+
+    // 起動時、まだモデルが無ければ選択モーダルを開く
+    this._modelPicker.init().then((count) => {
+      if (count > 0 && !this._models.length) this._modelPicker.open();
+    }).catch((err) => {
+      console.info("[vrm-pose-app] " + (err?.message ?? err));
+    });
   }
 
   // =========================================================
   // VRM 読込
   // =========================================================
+
+  /** モデル選択モーダルを開く。同梱モデルの一覧が無いときは、ファイル選択ダイアログを開く。 */
+  _openVrmSource() {
+    if (!this._modelPicker.open()) this._inputVrm.click();
+  }
 
   _bindEvents() {
     // 右パネルのタブ切替（ボーン / 表情 / 背景）
@@ -246,10 +276,10 @@ class App {
     });
 
     // VRM 読込
-    this._btnLoadVrm.addEventListener("click", () => this._inputVrm.click());
+    this._btnLoadVrm.addEventListener("click", () => this._openVrmSource());
     document.getElementById("btn-model-add")?.addEventListener(
       "click",
-      () => this._inputVrm.click(),
+      () => this._openVrmSource(),
     );
     this._inputVrm.addEventListener("change", async (e) => {
       const files = [...e.target.files];
@@ -381,6 +411,16 @@ class App {
       this._showToast(tr("app.007"), "success");
     });
 
+    // 半身・全身の撮影(モデル選択画面のサムネイル用)
+    this._btnCapturePortrait.addEventListener(
+      "click",
+      () => this._captureFramed("portrait"),
+    );
+    this._btnCaptureFullBody.addEventListener(
+      "click",
+      () => this._captureFramed("fullBody"),
+    );
+
     // ポーズリセット
     this._btnResetPose.addEventListener("click", () => {
       if (!this._vrm) return;
@@ -450,6 +490,52 @@ class App {
     } catch (err) {
       this._showToast(err.message || tr("app.010"), "danger");
     }
+  }
+
+  /**
+   * 同梱モデルを URL から取得して読み込む(モデル選択モーダルから呼ばれる)。
+   * @returns {Promise<boolean>} 取得に失敗したら false(モーダルを開き直すため)
+   */
+  async _loadVrmFromUrl(entry) {
+    this._showLoading(true);
+    let file;
+    try {
+      const res = await fetch(entry.vrmUrl);
+      if (!res.ok) throw new Error(tr("app.034", entry.fileName));
+      file = new File([await res.blob()], entry.fileName, {
+        type: "model/gltf-binary",
+      });
+    } catch (err) {
+      this._showLoading(false);
+      this._showToast(err.message || tr("app.034", entry.fileName), "danger");
+      return false;
+    }
+    await this._loadVrm(file); // 失敗時のトースト表示・ローディング解除は _loadVrm 側で行う
+    return true;
+  }
+
+  /**
+   * 編集中のモデルを半身 / 全身の構図で撮影し、<モデル名>_portrait.png / _full_body.png として保存する。
+   * @param {"portrait"|"fullBody"} mode
+   */
+  _captureFramed(mode) {
+    if (!this._vrm) return;
+    const dataUrl = this._scene.captureFramed(
+      this._vrm,
+      mode,
+      FRAME_CAPTURE_WIDTH,
+      FRAME_CAPTURE_HEIGHT,
+    );
+    if (!dataUrl) {
+      this._showToast(tr("app.049"), "danger");
+      return;
+    }
+    const name = this._vrmFilename.replace(/\.vrm$/i, "") || "model";
+    const filename = `${name}_${
+      mode === "portrait" ? "portrait" : "full_body"
+    }.png`;
+    Exporter.saveImage(dataUrl, filename);
+    this._showToast(tr("app.050", filename), "success");
   }
 
   async _loadVrm(file) {
@@ -699,7 +785,8 @@ class App {
         face.classList.add("has-thumbnail");
         face.style.backgroundImage = `url(${model.thumbnail})`;
       } else {
-        face.innerHTML = '<svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#person-circle"/></svg>';
+        face.innerHTML =
+          '<svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#person-circle"/></svg>';
       }
       face.addEventListener("click", () => this._activateModel(model.id));
 
@@ -711,7 +798,8 @@ class App {
       remove.type = "button";
       remove.className = "model-chip-remove";
       remove.title = tr("app.018", model.name);
-      remove.innerHTML = '<svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#x"/></svg>';
+      remove.innerHTML =
+        '<svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#x"/></svg>';
       remove.addEventListener("click", (e) => {
         e.stopPropagation();
         this._removeModel(model.id);
@@ -2223,6 +2311,8 @@ class App {
       this._btnPastePose,
       this._btnSaveProject,
       this._btnScreenshot,
+      this._btnCapturePortrait,
+      this._btnCaptureFullBody,
       this._btnResetPose,
     ].forEach((btn) => {
       btn.disabled = !enabled;
