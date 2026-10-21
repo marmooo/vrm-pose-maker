@@ -27,7 +27,7 @@
 
 const EXTENSIONS = /\.(fbx|glb|vrma)$/i;
 
-const animationsDir = new URL('../animations/', import.meta.url);
+const animationsDir = new URL('../src/animations/', import.meta.url);
 const listPath = new URL('list.txt', animationsDir);
 const rootPath = decodeURIComponent(animationsDir.pathname).replace(/\/$/, '');
 
