@@ -15,6 +15,10 @@ const FRAME_FOV = 20;
 // 撮影構図の余白(被写体の高さに対する倍率)。1.1 なら上下に5%ずつ余白が出る
 const FRAME_MARGIN = 1.1;
 
+// 通常の視点の近クリップ面。注視点に近づいたときは、距離に応じてこれより小さくする(_updateNearPlane)
+const CAMERA_NEAR = 0.1;
+const CAMERA_NEAR_MIN = 0.005;
+
 const THEME_BACKGROUND = { dark: "#1a1a2e", light: "#e9edf3" };
 const THEME_GRID = { dark: [0x333333, 0x222222], light: [0x9aa3af, 0xc3cad3] };
 
@@ -59,7 +63,7 @@ export class SceneManager {
     this.scene.fog = new THREE.Fog(0x1a1a2e, 10, 30);
 
     // Camera
-    this.camera = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
+    this.camera = new THREE.PerspectiveCamera(30, 1, CAMERA_NEAR, 100);
     this.camera.position.set(0, 1.4, 4);
     this.camera.lookAt(0, 1.0, 0);
 
@@ -93,6 +97,10 @@ export class SceneManager {
     this.controls.enablePan = true;
     this.controls.enableZoom = true;
     this.controls.enableRotate = true;
+    // ホイール/ピンチのズームを、画面中央ではなくカーソル(ピンチの中心)の位置に向けて行う。
+    // 既定のままだと注視点(胴体の中心付近)に向かって寄るので、顔に近づこうとしても
+    // 顔に届く前に体の内側へ入ってしまう。
+    this.controls.zoomToCursor = true;
     this.controls.mouseButtons = {
       LEFT: THREE.MOUSE.ROTATE,
       MIDDLE: THREE.MOUSE.DOLLY,
@@ -143,7 +151,25 @@ export class SceneManager {
     }
 
     this.controls.update();
+    this._updateNearPlane();
     this.renderer.render(this.scene, this.camera);
+  }
+
+  /**
+   * 注視点までの距離に応じて近クリップ面を変える。近クリップ面より近い面は描かれないので、
+   * 固定のままだと顔などに寄ったとき、肌や服の表面が欠けて内側が見えてしまう。
+   * 通常の距離(約2m以上)では CAMERA_NEAR のままにして、深度の精度は変えない。
+   */
+  _updateNearPlane() {
+    const distance = this.camera.position.distanceTo(this.controls.target);
+    const near = THREE.MathUtils.clamp(
+      distance * 0.05,
+      CAMERA_NEAR_MIN,
+      CAMERA_NEAR,
+    );
+    if (Math.abs(near - this.camera.near) < 1e-6) return;
+    this.camera.near = near;
+    this.camera.updateProjectionMatrix();
   }
 
   /**
