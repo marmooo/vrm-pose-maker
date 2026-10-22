@@ -71,7 +71,8 @@
     <link href="css/style.css" rel="stylesheet" />
     <script data-ad-client="ca-pub-6459713332128733" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
   </head>
-  <body class="bg-body text-body d-flex flex-column overflow-hidden" style="height: 100dvh;" data-animation-list="/vrm-pose-maker/animations/list.txt" data-vrm-list="/vrm-pose-maker/vrm/list.txt">
+  <body class="bg-body text-body overflow-hidden" data-animation-list="/vrm-pose-maker/animations/list.txt" data-vrm-list="/vrm-pose-maker/vrm/list.txt">
+    <div id="app" class="position-fixed top-0 start-0 w-100 d-flex flex-column overflow-hidden" style="height: 100dvh;">
 
     <!-- Navbar -->
     <nav class="navbar bg-body-tertiary border-bottom px-3">
@@ -347,6 +348,8 @@
       <button id="btn-capture-full-body" class="btn btn-outline-body btn-sm" disabled title="Saves a 600×800 transparent PNG of the model being edited, framed to fit the whole body, with the current pose and expression. File name: (model name)_full_body.png">
         <svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#person-arms-up"/></svg>Full-body shot
       </button>
+    </div>
+
     </div>
 
     <!-- Model picker modal (shown at start-up; reads vrm/list.txt) -->
