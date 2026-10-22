@@ -268,7 +268,12 @@
         <div class="flex-grow-1 overflow-auto p-2">
           <div class="mb-3">
             <label class="form-label small text-secondary mb-1" for="bg-color">Background color</label>
-            <input type="color" id="bg-color" class="form-control form-control-color w-100" value="#1a1a2e" title="Background color">
+            <div class="d-flex gap-2">
+              <input type="color" id="bg-color" class="form-control form-control-color flex-grow-1" value="#1a1a2e" title="Background color">
+              <button type="button" id="btn-reset-bg-color" class="btn btn-outline-secondary" title="Reset the background color to the default" aria-label="Reset the background color to the default">
+                <svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#arrow-counterclockwise"/></svg>
+              </button>
+            </div>
           </div>
           <div class="mb-3">
             <label class="form-label small text-secondary mb-1" for="bg-image">Background image / video</label>

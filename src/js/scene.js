@@ -489,6 +489,16 @@ export class SceneManager {
   }
 
   /**
+   * 背景色を現在のテーマの既定色に戻す(以後はテーマの切り替えにも追従する)。
+   * 背景画像が設定されている場合はクリアされる(setBackgroundColor と同じ)。
+   * @returns {string} 戻した背景色('#rrggbb')
+   */
+  resetBackgroundColor() {
+    this.setBackgroundColor(THEME_BACKGROUND[this._theme], { auto: true });
+    return "#" + new THREE.Color(this._bgColor).getHexString();
+  }
+
+  /**
    * ライト/ダークのテーマに合わせた既定の背景色・床グリッドの色にする。
    * 背景色をユーザーが自分で選んでいる場合は、その色を保ったままグリッドの色だけ合わせる。
    * @returns {string} 現在の背景色('#rrggbb')

@@ -234,6 +234,15 @@ class App {
       this._scene.setBackgroundColor(e.target.value);
     });
 
+    document.getElementById("btn-reset-bg-color")?.addEventListener(
+      "click",
+      () => {
+        const color = this._scene.resetBackgroundColor();
+        const input = document.getElementById("bg-color");
+        if (input) input.value = color;
+      },
+    );
+
     // 背景画像
     document.getElementById("bg-image")?.addEventListener("change", (e) => {
       const file = e.target.files?.[0];

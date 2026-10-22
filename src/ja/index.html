@@ -268,7 +268,12 @@
         <div class="flex-grow-1 overflow-auto p-2">
           <div class="mb-3">
             <label class="form-label small text-secondary mb-1" for="bg-color">背景色</label>
-            <input type="color" id="bg-color" class="form-control form-control-color w-100" value="#1a1a2e" title="背景色">
+            <div class="d-flex gap-2">
+              <input type="color" id="bg-color" class="form-control form-control-color flex-grow-1" value="#1a1a2e" title="背景色">
+              <button type="button" id="btn-reset-bg-color" class="btn btn-outline-secondary" title="背景色を既定の色に戻す" aria-label="背景色を既定の色に戻す">
+                <svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#arrow-counterclockwise"/></svg>
+              </button>
+            </div>
           </div>
           <div class="mb-3">
             <label class="form-label small text-secondary mb-1" for="bg-image">背景画像・動画</label>
