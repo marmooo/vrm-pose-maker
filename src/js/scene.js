@@ -97,10 +97,9 @@ export class SceneManager {
     this.controls.enablePan = true;
     this.controls.enableZoom = true;
     this.controls.enableRotate = true;
-    // ホイール/ピンチのズームを、画面中央ではなくカーソル(ピンチの中心)の位置に向けて行う。
-    // 既定のままだと注視点(胴体の中心付近)に向かって寄るので、顔に近づこうとしても
-    // 顔に届く前に体の内側へ入ってしまう。
-    this.controls.zoomToCursor = true;
+    // ホイール/ピンチのズームは、カーソル位置ではなく画面中央(注視点)に向けて行う。
+    // 近づきすぎて体の内側に入らないよう、近クリップ面は _updateNearPlane で距離に応じて詰める。
+    this.controls.zoomToCursor = false;
     this.controls.mouseButtons = {
       LEFT: THREE.MOUSE.ROTATE,
       MIDDLE: THREE.MOUSE.DOLLY,
