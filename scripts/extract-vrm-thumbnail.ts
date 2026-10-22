@@ -27,7 +27,9 @@ type GltfJson = {
 
 type Thumbnail = { data: Uint8Array; ext: string };
 
-function parseGlb(bytes: Uint8Array): { json: GltfJson; bin: Uint8Array | null } {
+function parseGlb(
+  bytes: Uint8Array,
+): { json: GltfJson; bin: Uint8Array | null } {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (bytes.byteLength < 20 || view.getUint32(0, true) !== GLB_MAGIC) {
     throw new Error("GLB (VRM) ファイルではありません");
@@ -156,7 +158,9 @@ async function main(args: string[]): Promise<number> {
       const stem = basename(file, extname(file));
       const dest = join(outDir ?? dirname(file), `${stem}.${thumb.ext}`);
       await Deno.writeFile(dest, thumb.data);
-      console.log(`保存: ${dest} (${(thumb.data.byteLength / 1024).toFixed(1)} KB)`);
+      console.log(
+        `保存: ${dest} (${(thumb.data.byteLength / 1024).toFixed(1)} KB)`,
+      );
     } catch (e) {
       console.error(`失敗: ${file}: ${e instanceof Error ? e.message : e}`);
       failed++;

@@ -27,9 +27,9 @@
 
 const EXTENSIONS = /\.(fbx|glb|vrma)$/i;
 
-const animationsDir = new URL('../src/animations/', import.meta.url);
-const listPath = new URL('list.txt', animationsDir);
-const rootPath = decodeURIComponent(animationsDir.pathname).replace(/\/$/, '');
+const animationsDir = new URL("../src/animations/", import.meta.url);
+const listPath = new URL("list.txt", animationsDir);
+const rootPath = decodeURIComponent(animationsDir.pathname).replace(/\/$/, "");
 
 const files: string[] = [];
 const visited = new Set<string>();
@@ -40,9 +40,11 @@ function walk(dirPath: string, relativeDir: string): void {
   visited.add(realDir);
 
   for (const entry of Deno.readDirSync(dirPath)) {
-    if (entry.name.startsWith('.')) continue;
+    if (entry.name.startsWith(".")) continue;
     const fullPath = `${dirPath}/${entry.name}`;
-    const relativePath = relativeDir ? `${relativeDir}/${entry.name}` : entry.name;
+    const relativePath = relativeDir
+      ? `${relativeDir}/${entry.name}`
+      : entry.name;
 
     let isDirectory = entry.isDirectory;
     let isFile = entry.isFile;
@@ -62,21 +64,29 @@ function walk(dirPath: string, relativeDir: string): void {
 }
 
 try {
-  walk(rootPath, '');
+  walk(rootPath, "");
 } catch (err) {
   if (err instanceof Deno.errors.NotFound) {
     console.error(`ディレクトリが見つかりません: ${rootPath}`);
-    console.error('animations/ フォルダを作成し、.fbx / .glb / .vrma ファイルを置いてから再実行してください。');
+    console.error(
+      "animations/ フォルダを作成し、.fbx / .glb / .vrma ファイルを置いてから再実行してください。",
+    );
     Deno.exit(1);
   }
   throw err;
 }
 
-files.sort((a, b) => a.localeCompare(b, 'ja'));
+files.sort((a, b) => a.localeCompare(b, "ja"));
 
 if (files.length === 0) {
-  console.warn(`警告: ${rootPath} 以下に .fbx / .glb / .vrma ファイルが見つかりませんでした。list.txt は空のまま作成します。`);
+  console.warn(
+    `警告: ${rootPath} 以下に .fbx / .glb / .vrma ファイルが見つかりませんでした。list.txt は空のまま作成します。`,
+  );
 }
 
-Deno.writeTextFileSync(listPath, files.map((name) => name + '\n').join(''));
-console.log(`${files.length} 件のファイルを ${decodeURIComponent(listPath.pathname)} に書き出しました。`);
+Deno.writeTextFileSync(listPath, files.map((name) => name + "\n").join(""));
+console.log(
+  `${files.length} 件のファイルを ${
+    decodeURIComponent(listPath.pathname)
+  } に書き出しました。`,
+);
