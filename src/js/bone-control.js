@@ -19,6 +19,10 @@
  *   2本指ドラッグ（球内）     : ボーン位置移動
  *   1本指タップ（中心の黄色い起点）: 操作対象トグル（自分 ⇄ 親ボーン）
  *
+ * 他のアバター（現在選択中ではないモデル）の長押し（マウス・タッチ共通）:
+ *   そのアバターを選択する（動かさずに一定時間押し続けたとき）。
+ *   押したままドラッグすれば、そのまま選択したアバターの位置移動に移る
+ *
  * 「親ボーンに切り替え」（右クリック/長押し）と「操作対象トグル」（起点クリック）は別機能:
  *   - 前者は選択ボーン自体を親ボーンに変更する（球の位置も移動する）
  *   - 後者は選択・球の位置は変えず、ドラッグ操作が実際にどのボーンに
@@ -74,6 +78,10 @@ export class BoneController {
     this._lastClientX = 0;
     this._lastClientY = 0;
 
+    // 他のアバターの長押し（そのアバターを選択）
+    this._modelPickTimer = null;
+    this._modelPickPos = null;
+
     // 長押しタイマー
     this._longPressTimer = null;
     this._longPressTriggered = false;
@@ -115,6 +123,7 @@ export class BoneController {
       this._rightDownPos = null;
       this._rightDragged = false;
       this._clearLongPressTimer();
+      this._clearModelPick();
       this._scene.controls.enabled = true;
       this._canvas.classList.remove("dragging-bone");
       this._boneSphere?.setDragging(false);
@@ -281,6 +290,7 @@ export class BoneController {
     // 球外の左クリック: モデルに当たればボーン選択、何もなければ選択解除候補として保留
     // （実際に解除するのはドラッグせずに手を離した時。カメラ回転のドラッグ中は解除しない）
     if (e.button === 0) {
+      this._startModelPick(e.clientX, e.clientY);
       const hits = this._raycaster.intersectObjects(
         this._getSkinMeshes(),
         true,
@@ -311,6 +321,8 @@ export class BoneController {
   }
 
   _onMouseMove(e) {
+    this._cancelModelPickIfMoved(e.clientX, e.clientY);
+
     // 選択解除の保留中: カメラ回転のためにドラッグしたかどうかを判定
     // （動いたらドラッグ＝カメラ回転とみなし、mouseupでも解除しない）
     if (this._leftDeselectDownPos && !this._leftDeselectDragged) {
@@ -367,6 +379,7 @@ export class BoneController {
 
   _onMouseUp(e) {
     if (e.button !== 0 && e.button !== 2) return;
+    if (e.button === 0) this._clearModelPick();
 
     if (
       e.button === 0 && this._leftDeselectDownPos && !this._leftDeselectDragged
@@ -492,6 +505,7 @@ export class BoneController {
 
       // 球外: モデルタップでボーン選択、何もなければ選択解除候補として保留
       // （実際に解除するのはドラッグせずに指を離した時。カメラ回転中は解除しない）
+      this._startModelPick(t.clientX, t.clientY);
       const hits = this._raycaster.intersectObjects(
         this._getSkinMeshes(),
         true,
@@ -516,6 +530,7 @@ export class BoneController {
     } else if (e.touches.length === 2) {
       // 2本指
       this._clearLongPressTimer();
+      this._clearModelPick();
 
       if (this._boneSphere && this._selectedBoneNode) {
         // どちらかのタッチが球内なら位置移動モード
@@ -541,6 +556,10 @@ export class BoneController {
   }
 
   _onTouchMove(e) {
+    if (e.touches.length >= 1) {
+      this._cancelModelPickIfMoved(e.touches[0].clientX, e.touches[0].clientY);
+    }
+
     // 選択解除の保留中: ドラッグ（カメラ回転）したかどうかを判定
     if (
       this._leftDeselectDownPos && !this._leftDeselectDragged &&
@@ -612,6 +631,7 @@ export class BoneController {
 
   _onTouchEnd(e) {
     this._clearLongPressTimer();
+    this._clearModelPick();
 
     if (this._leftDeselectDownPos && !this._leftDeselectDragged) {
       // ドラッグせずに指を離した＝カメラ回転ではなくタップ → 選択解除
@@ -697,6 +717,80 @@ export class BoneController {
     const camToOrigin = new THREE.Vector3()
       .subVectors(this._scene.camera.position, originWorld).normalize();
     return worldAxis.dot(camToOrigin) >= 0 ? 1 : -1;
+  }
+
+  // =========================================================
+  // 他のアバターの長押し → そのアバターを選択
+  // =========================================================
+
+  /**
+   * 押した位置に「現在選択中ではないアバター」が（選択中のアバターより手前に）あれば、
+   * 長押し判定を開始する。動かさずに LONG_PRESS_MS 経過したらコールバックで通知する。
+   */
+  _startModelPick(clientX, clientY) {
+    this._clearModelPick();
+    if (!this._callbacks.onModelLongPress) return;
+    const others = this._callbacks.getOtherVrms?.() ?? [];
+    if (!others.length) return;
+
+    const meshesOf = (vrm) => {
+      const meshes = [];
+      vrm.scene.traverse((obj) => {
+        if (obj.isSkinnedMesh) meshes.push(obj);
+      });
+      return meshes;
+    };
+    const activeHit = this._raycaster.intersectObjects(
+      this._getSkinMeshes(),
+      true,
+    )[0];
+    let nearest = null;
+    for (const vrm of others) {
+      const hit = this._raycaster.intersectObjects(meshesOf(vrm), true)[0];
+      if (hit && (!nearest || hit.distance < nearest.distance)) {
+        nearest = { vrm, distance: hit.distance };
+      }
+    }
+    if (!nearest || (activeHit && activeHit.distance <= nearest.distance)) {
+      return;
+    }
+
+    this._modelPickPos = { x: clientX, y: clientY };
+    this._modelPickTimer = setTimeout(() => {
+      const vrm = nearest.vrm;
+      const pos = this._modelPickPos;
+      this._clearModelPick();
+      // 長押しで選択したので、指を離したときの「選択解除」は行わない
+      this._leftDeselectDownPos = null;
+      this._leftDeselectDragged = false;
+      navigator.vibrate?.(30);
+      this._callbacks.onModelLongPress(vrm);
+
+      // 押したままドラッグすれば、選択したアバターをそのまま移動できる状態へ移る
+      // （setVrm で操作状態がリセットされるので、選択した後に設定する）
+      if (this._vrm === vrm) {
+        this._trackingMode = "model-translate";
+        this._scene.controls.enabled = false;
+        this._canvas.classList.add("dragging-bone");
+        this._lastClientX = pos.x;
+        this._lastClientY = pos.y;
+      }
+    }, LONG_PRESS_MS);
+  }
+
+  _cancelModelPickIfMoved(clientX, clientY) {
+    if (!this._modelPickPos) return;
+    const dx = clientX - this._modelPickPos.x;
+    const dy = clientY - this._modelPickPos.y;
+    if (Math.hypot(dx, dy) > DRAG_THRESHOLD) this._clearModelPick();
+  }
+
+  _clearModelPick() {
+    if (this._modelPickTimer) {
+      clearTimeout(this._modelPickTimer);
+      this._modelPickTimer = null;
+    }
+    this._modelPickPos = null;
   }
 
   _clearLongPressTimer() {

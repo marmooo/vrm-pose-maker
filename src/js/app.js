@@ -132,6 +132,19 @@ class App {
         this._onTargetModeToggle(mode, effectiveBoneName),
       // 球にもモデルにも当たらない場所をクリック/タップした時 → 選択解除
       onDeselect: () => this._onDeselect(),
+      // 選択中ではないアバターの長押し → そのアバターを選択
+      getOtherVrms: () =>
+        this._models.filter((m) => m.id !== this._activeModelId).map((m) =>
+          m.vrm
+        ),
+      onModelLongPress: (vrm) => {
+        const model = this._models.find((m) => m.vrm === vrm);
+        // 長押しは「今見ている視点のまま」編集対象だけを切り替える
+        if (model) {
+          this._activateModel(model.id, { moveCamera: false });
+          this._scene.pulseSelection(model.vrm);
+        }
+      },
     });
 
     // 可動域球
@@ -750,7 +763,7 @@ class App {
     return Math.abs(hipsWorldY - rootWorldY);
   }
 
-  _activateModel(id) {
+  _activateModel(id, { moveCamera = true } = {}) {
     const model = this._models.find((item) => item.id === id);
     if (!model) return;
     this._activeModelId = id;
@@ -759,7 +772,7 @@ class App {
     this._vrmFilename = model.name;
     this._initialQuaternions = model.initialQuaternions;
     this._initialPositions = model.initialPositions;
-    this._scene.focusVrm(model.vrm);
+    this._scene.focusVrm(model.vrm, { moveCamera });
     this._updateAnimationButton(model);
     this._boneCtrl.setVrm(model.vrm);
     this._boneSphere.setVrm(model.vrm);
@@ -797,7 +810,10 @@ class App {
         face.innerHTML =
           '<svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#person-circle"/></svg>';
       }
-      face.addEventListener("click", () => this._activateModel(model.id));
+      face.addEventListener("click", () => {
+        this._activateModel(model.id);
+        this._scene.pulseSelection(model.vrm);
+      });
 
       const number = document.createElement("span");
       number.className = "model-chip-number";

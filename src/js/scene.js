@@ -135,6 +135,7 @@ export class SceneManager {
     const delta = this._timer.getDelta();
 
     for (const vrm of this.vrms) vrm.update(delta);
+    this._updateSelectionPulses(delta);
     // 編集中でないモデルのアニメーションも止めずに再生し続けるため、
     // 登録されている全モデルのミキサーを毎フレーム更新する。
     for (const mixer of this._animationMixers) mixer.update(delta);
@@ -152,6 +153,78 @@ export class SceneManager {
     this.controls.update();
     this._updateNearPlane();
     this.renderer.render(this.scene, this.camera);
+  }
+
+  /**
+   * 編集対象のアバターが切り替わったことを知らせるエフェクト。
+   * アバターの足元から、地面に沿って広がりながら消える光の輪を2つ出す(約1秒)。
+   * 光の輪は深度テストをしないので、グリッドや他のアバターに隠れない。
+   * @param {import('@pixiv/three-vrm').VRM} vrm
+   */
+  pulseSelection(vrm) {
+    if (!vrm) return;
+    const box = new THREE.Box3().setFromObject(vrm.scene);
+    if (box.isEmpty()) return;
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const radius = Math.max(Math.max(size.x, size.z) * 0.5, 0.35);
+
+    this._selectionPulses ??= [];
+    for (let i = 0; i < 2; i++) {
+      const material = new THREE.MeshBasicMaterial({
+        color: 0x4dabf7,
+        transparent: true,
+        opacity: 0,
+        depthTest: false,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        toneMapped: false,
+      });
+      const mesh = new THREE.Mesh(
+        new THREE.RingGeometry(0.8, 1, 64),
+        material,
+      );
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.position.set(center.x, box.min.y + 0.01, center.z);
+      mesh.renderOrder = 999;
+      mesh.raycast = () => {}; // クリック判定には関与しない
+      this.scene.add(mesh);
+      this._selectionPulses.push({
+        mesh,
+        radius,
+        age: -i * 0.18, // 2つめの輪は少し遅らせる
+      });
+    }
+  }
+
+  _updateSelectionPulses(delta) {
+    if (!this._selectionPulses?.length) return;
+    const duration = 1.0;
+    this._selectionPulses = this._selectionPulses.filter((pulse) => {
+      pulse.age += delta;
+      const t = pulse.age / duration;
+      if (t >= 1) {
+        this._disposePulse(pulse);
+        return false;
+      }
+      if (t < 0) return true; // まだ出ていない
+      const eased = 1 - (1 - t) * (1 - t); // 最初に勢いよく広がる
+      pulse.mesh.scale.setScalar(pulse.radius * (0.5 + eased * 1.4));
+      pulse.mesh.material.opacity = 0.9 * (1 - t);
+      return true;
+    });
+  }
+
+  _disposePulse(pulse) {
+    this.scene.remove(pulse.mesh);
+    pulse.mesh.geometry.dispose();
+    pulse.mesh.material.dispose();
+  }
+
+  /** 撮影・書き出しに映り込まないよう、出ている選択エフェクトを消す。 */
+  _clearSelectionPulses() {
+    for (const pulse of this._selectionPulses ?? []) this._disposePulse(pulse);
+    this._selectionPulses = [];
   }
 
   /**
@@ -180,6 +253,7 @@ export class SceneManager {
    * @returns {string|null} data URL (image/png)。頭のボーンが見つからない場合は null。
    */
   captureFaceThumbnail(vrm, size = 128) {
+    this._clearSelectionPulses();
     if (!vrm) return null;
     const headNode = vrm.humanoid?.getNormalizedBoneNode("head");
     if (!headNode) return null;
@@ -282,6 +356,7 @@ export class SceneManager {
    * @returns {string|null} data URL (image/png)。撮影できない(形状が空など)場合は null。
    */
   captureFramed(vrm, mode, width = 600, height = 800) {
+    this._clearSelectionPulses();
     if (!vrm) return null;
 
     // 現在のポーズでの最新の形状から範囲を求める。precise=true にしないと、スキンメッシュは
@@ -482,10 +557,11 @@ export class SceneManager {
     }
   }
 
-  /** 編集対象の VRM にカメラを合わせる。 */
-  focusVrm(vrm) {
+  /** 編集対象の VRM にカメラを合わせる(moveCamera: false なら編集対象だけを切り替え、視点は動かさない)。 */
+  focusVrm(vrm, { moveCamera = true } = {}) {
     if (!vrm) return;
     this.currentVrm = vrm;
+    if (!moveCamera) return;
 
     // カメラをモデルに合わせる
     const box = new THREE.Box3().setFromObject(vrm.scene);
@@ -835,6 +911,7 @@ export class SceneManager {
    * @returns {string} data URL (PNG)
    */
   getScreenshot({ scale = 1, transparent = false } = {}) {
+    this._clearSelectionPulses();
     const r = this.renderer;
     const canvas = r.domElement;
     const baseW = canvas.width, baseH = canvas.height;
