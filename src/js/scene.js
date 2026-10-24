@@ -136,6 +136,7 @@ export class SceneManager {
 
     for (const vrm of this.vrms) vrm.update(delta);
     this._updateSelectionPulses(delta);
+    this.sceneObjects?.update(delta);
     // 編集中でないモデルのアニメーションも止めずに再生し続けるため、
     // 登録されている全モデルのミキサーを毎フレーム更新する。
     for (const mixer of this._animationMixers) mixer.update(delta);
@@ -254,6 +255,7 @@ export class SceneManager {
    */
   captureFaceThumbnail(vrm, size = 128) {
     this._clearSelectionPulses();
+    this.sceneObjects?.hideHelper();
     if (!vrm) return null;
     const headNode = vrm.humanoid?.getNormalizedBoneNode("head");
     if (!headNode) return null;
@@ -357,6 +359,7 @@ export class SceneManager {
    */
   captureFramed(vrm, mode, width = 600, height = 800) {
     this._clearSelectionPulses();
+    this.sceneObjects?.hideHelper();
     if (!vrm) return null;
 
     // 現在のポーズでの最新の形状から範囲を求める。precise=true にしないと、スキンメッシュは
@@ -912,6 +915,7 @@ export class SceneManager {
    */
   getScreenshot({ scale = 1, transparent = false } = {}) {
     this._clearSelectionPulses();
+    this.sceneObjects?.hideHelper();
     const r = this.renderer;
     const canvas = r.domElement;
     const baseW = canvas.width, baseH = canvas.height;

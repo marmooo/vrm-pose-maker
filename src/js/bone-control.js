@@ -78,6 +78,9 @@ export class BoneController {
     this._lastClientX = 0;
     this._lastClientY = 0;
 
+    // オブジェクト(GLB/FBX の小物)上の操作: クリック＝選択、ドラッグ＝移動
+    this._objectId = null;
+
     // 他のアバターの長押し（そのアバターを選択）
     this._modelPickTimer = null;
     this._modelPickPos = null;
@@ -295,6 +298,20 @@ export class BoneController {
         this._getSkinMeshes(),
         true,
       );
+      // アバターより手前にオブジェクトがあれば、そちらを操作する
+      const objectHit = this._callbacks.pickObject?.(this._raycaster);
+      if (
+        objectHit && (!hits.length || objectHit.distance < hits[0].distance)
+      ) {
+        this._clearModelPick();
+        this._objectId = objectHit.id;
+        this._trackingMode = "object-pending";
+        this._modelDownPos = { x: e.clientX, y: e.clientY };
+        this._scene.controls.enabled = false;
+        this._lastClientX = e.clientX;
+        this._lastClientY = e.clientY;
+        return;
+      }
       if (hits.length > 0) {
         const boneName = this._findNearestBoneFromIntersection(hits[0]);
         if (boneName) {
@@ -313,7 +330,7 @@ export class BoneController {
         }
       }
       // モデルにもボーン球にも当たらなかった＝完全に外側をクリック
-      if (this._selectedBoneName) {
+      if (this._selectedBoneName || this._callbacks.hasObjectSelection?.()) {
         this._leftDeselectDownPos = { x: e.clientX, y: e.clientY };
         this._leftDeselectDragged = false;
       }
@@ -345,6 +362,20 @@ export class BoneController {
       }
     } else if (this._trackingMode === "model-translate") {
       this._translateModel(
+        e.clientX - this._lastClientX,
+        e.clientY - this._lastClientY,
+      );
+    } else if (this._trackingMode === "object-pending") {
+      const dx = e.clientX - this._modelDownPos.x,
+        dy = e.clientY - this._modelDownPos.y;
+      if (Math.hypot(dx, dy) > DRAG_THRESHOLD) {
+        this._trackingMode = "object-translate";
+        this._callbacks.onObjectSelect?.(this._objectId);
+        this._canvas.classList.add("dragging-bone");
+      }
+    } else if (this._trackingMode === "object-translate") {
+      this._callbacks.onObjectDrag?.(
+        this._objectId,
         e.clientX - this._lastClientX,
         e.clientY - this._lastClientY,
       );
@@ -389,6 +420,16 @@ export class BoneController {
     }
     this._leftDeselectDownPos = null;
     this._leftDeselectDragged = false;
+
+    if (e.button === 0 && this._trackingMode === "object-pending") {
+      const id = this._objectId;
+      this._trackingMode = null;
+      this._objectId = null;
+      this._modelDownPos = null;
+      this._scene.controls.enabled = true;
+      this._callbacks.onObjectSelect?.(id);
+      return;
+    }
 
     if (e.button === 0 && this._trackingMode === "model-pending") {
       const boneName = this._modelPendingBone;
@@ -510,6 +551,20 @@ export class BoneController {
         this._getSkinMeshes(),
         true,
       );
+      const objectHit = this._callbacks.pickObject?.(this._raycaster);
+      if (
+        objectHit && (!hits.length || objectHit.distance < hits[0].distance)
+      ) {
+        e.preventDefault();
+        this._clearModelPick();
+        this._objectId = objectHit.id;
+        this._trackingMode = "object-pending";
+        this._modelDownPos = { x: t.clientX, y: t.clientY };
+        this._scene.controls.enabled = false;
+        this._lastClientX = t.clientX;
+        this._lastClientY = t.clientY;
+        return;
+      }
       if (hits.length > 0) {
         const boneName = this._findNearestBoneFromIntersection(hits[0]);
         if (boneName) {
@@ -523,7 +578,9 @@ export class BoneController {
           return;
         }
         if (boneName) this._selectBone(boneName);
-      } else if (this._selectedBoneName) {
+      } else if (
+        this._selectedBoneName || this._callbacks.hasObjectSelection?.()
+      ) {
         this._leftDeselectDownPos = { x: t.clientX, y: t.clientY };
         this._leftDeselectDragged = false;
       }
@@ -577,7 +634,34 @@ export class BoneController {
     e.preventDefault();
     this._clearLongPressTimer();
 
-    if (this._trackingMode === "model-pending" && e.touches.length === 1) {
+    if (this._trackingMode === "object-pending" && e.touches.length === 1) {
+      const t = e.touches[0];
+      if (
+        Math.hypot(
+          t.clientX - this._modelDownPos.x,
+          t.clientY - this._modelDownPos.y,
+        ) > DRAG_THRESHOLD
+      ) {
+        this._trackingMode = "object-translate";
+        this._callbacks.onObjectSelect?.(this._objectId);
+        this._canvas.classList.add("dragging-bone");
+      }
+      this._lastClientX = t.clientX;
+      this._lastClientY = t.clientY;
+    } else if (
+      this._trackingMode === "object-translate" && e.touches.length === 1
+    ) {
+      const t = e.touches[0];
+      this._callbacks.onObjectDrag?.(
+        this._objectId,
+        t.clientX - this._lastClientX,
+        t.clientY - this._lastClientY,
+      );
+      this._lastClientX = t.clientX;
+      this._lastClientY = t.clientY;
+    } else if (
+      this._trackingMode === "model-pending" && e.touches.length === 1
+    ) {
       const t = e.touches[0];
       if (
         Math.hypot(
@@ -642,6 +726,16 @@ export class BoneController {
 
     if (!this._trackingMode) return;
 
+    if (this._trackingMode === "object-pending" && e.touches.length === 0) {
+      const id = this._objectId;
+      this._trackingMode = null;
+      this._objectId = null;
+      this._modelDownPos = null;
+      this._scene.controls.enabled = true;
+      this._callbacks.onObjectSelect?.(id);
+      return;
+    }
+
     if (this._trackingMode === "model-pending" && e.touches.length === 0) {
       const boneName = this._modelPendingBone;
       this._trackingMode = null;
@@ -656,7 +750,9 @@ export class BoneController {
     if (
       e.touches.length === 0 ||
       ((this._trackingMode === "translate" && e.touches.length < 2) ||
-        (this._trackingMode === "model-translate" && e.touches.length === 0))
+        ((this._trackingMode === "model-translate" ||
+          this._trackingMode === "object-translate") &&
+          e.touches.length === 0))
     ) {
       this._trackingMode = null;
       this._scene.controls.enabled = true;

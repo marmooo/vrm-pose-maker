@@ -180,11 +180,18 @@
             <div class="small text-secondary mb-1">Models in the scene</div>
             <div id="model-list" class="model-list"><div class="text-secondary small">No models</div></div>
           </div>
+          <div class="p-2 border-bottom border-secondary overflow-auto flex-shrink-0" style="max-height: 50vh;">
+            <div class="small text-secondary mb-1">Objects in the scene</div>
+            <button id="btn-object-add" class="btn btn-sm btn-outline-body w-100 mb-2" title="Add a GLB / FBX file as an object (prop, set…) without checking whether it is an animation"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#plus-lg"/></svg>Add object</button>
+            <input type="file" id="input-object" accept=".glb,.gltf,.fbx" multiple class="d-none" />
+            <div id="object-list"></div>
+            <div id="object-controls" class="mt-2"></div>
+          </div>
           <div class="flex-grow-1 overflow-auto p-2">
             <button id="btn-model-add" class="btn btn-sm btn-outline-body w-100 mb-3"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#plus-lg"/></svg>Add VRM</button>
             <div class="small text-secondary mb-1">Pose of the selected model</div>
             <div class="d-grid gap-2">
-              <button id="btn-load-pose" class="btn btn-sm btn-outline-warning" disabled title="Load a GLB / FBX / VRMA file"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#upload"/></svg>Load pose</button>
+              <button id="btn-load-pose" class="btn btn-sm btn-outline-warning" disabled title="Load a GLB / FBX / VRMA file. Animations are applied to the selected model; files without a human animation are added as objects"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#upload"/></svg>Load pose</button>
               <button id="btn-toggle-animation" class="btn btn-sm btn-outline-info" disabled><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#pause-fill"/></svg>Pause animation</button>
               <select id="select-random-animation" class="form-select form-select-sm" disabled title="Poses targeted by random playback. The pose currently playing is selected; choose another to switch to it"><option value="">(Loading pose list…)</option></select>
               <button id="btn-random-animation" class="btn btn-sm btn-outline-info" disabled><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#shuffle"/></svg>Random pose playback</button>
@@ -442,6 +449,13 @@
       "app.048": "Pose reset (including position)",
       "app.049": "Could not capture an image of the model",
       "app.050": "Saved {0}",
+      "obj.001": "No objects",
+      "obj.002": "Scale",
+      "obj.003": "Rotation (Y)",
+      "obj.004": "Remove {0} from the scene",
+      "obj.005": "Added {0} as an object",
+      "obj.006": "Could not load the object: {0}",
+      "obj.007": "No visible geometry was found in this file",
       "picker.001": "{0} (portrait)",
       "picker.002": "{0} (full body)",
       "picker.003": "No preview image",

@@ -3,6 +3,7 @@
  */
 import * as THREE from "three";
 import { SceneManager } from "./scene.js";
+import { SceneObjects } from "./scene-objects.js";
 import { VrmLoader } from "./vrm-loader.js";
 import { BONE_LABELS, UIManager } from "./ui.js";
 import { BoneController } from "./bone-control.js";
@@ -85,6 +86,8 @@ class App {
       "select-random-animation",
     );
     this._inputPose = document.getElementById("input-pose");
+    this._btnObjectAdd = document.getElementById("btn-object-add");
+    this._inputObject = document.getElementById("input-object");
     this._modelList = document.getElementById("model-list");
     this._activeModelName = document.getElementById("active-model-name");
     this._vrmFile = null;
@@ -117,7 +120,19 @@ class App {
         this._onExpressionChange(name, weight),
     });
 
+    // VRM 以外の 3D オブジェクト(GLB / FBX)。一覧と操作(拡大率・回転)はモデルタブに出す。
+    this._objects = new SceneObjects(this._scene, {
+      listEl: document.getElementById("object-list"),
+      controlsEl: document.getElementById("object-controls"),
+    });
+    this._scene.sceneObjects = this._objects;
+
     this._boneCtrl = new BoneController(this._canvas, this._scene, {
+      // キャンバス上でオブジェクトをクリック/ドラッグした時(選択・移動)
+      pickObject: (raycaster) => this._objects.pick(raycaster),
+      hasObjectSelection: () => this._objects.selectedId !== null,
+      onObjectSelect: (id) => this._objects.select(id),
+      onObjectDrag: (id, dx, dy) => this._objects.translate(id, dx, dy),
       onBoneSelect: (boneName) => this._onBoneSelectFromCanvas(boneName),
       onBoneChange: (boneName, quaternion) =>
         this._onBoneChange(boneName, quaternion),
@@ -322,7 +337,19 @@ class App {
     this._btnLoadPose.addEventListener("click", () => this._inputPose.click());
     this._inputPose.addEventListener("change", async (e) => {
       const file = e.target.files?.[0];
-      if (file && this._vrm) await this._loadPoseFile(file);
+      if (file) await this._loadAnyModelFile(file);
+      e.target.value = "";
+    });
+
+    // オブジェクトとして追加(アニメーションかどうかの自動判定をせず、必ずオブジェクトにする)
+    this._btnObjectAdd?.addEventListener(
+      "click",
+      () => this._inputObject.click(),
+    );
+    this._inputObject?.addEventListener("change", async (e) => {
+      for (const file of [...e.target.files]) {
+        await this._addObjectFromFile(file);
+      }
       e.target.value = "";
     });
 
@@ -383,6 +410,7 @@ class App {
         (vrm) => this._getExpressionNames(vrm),
         (vrm) => getMaterialsSnapshot(vrm),
       );
+      project.objects = await this._objects.serialize();
       Exporter._download(
         new Blob([JSON.stringify(project, null, 2)], {
           type: "application/json",
@@ -493,6 +521,7 @@ class App {
         this._applyLoadedProject(vrm, model, project.scene);
       }
       this._scene.setVrms(this._models.map((item) => item.vrm));
+      await this._objects.restore(project.objects);
       if (project.scene?.lights) {
         this._scene.loadLightsData(project.scene.lights);
       }
@@ -685,14 +714,19 @@ class App {
       await this._setBackgroundFromFile(backgroundFiles[0]); // 貼り付け/ドロップした画像・動画は背景にする
     }
     if (poseFiles.length) {
-      if (!this._vrm) {
-        this._showToast(tr("app.014"), "warning");
-        return;
+      // オブジェクトはすべて追加し、アニメーション(ポーズ)は最初の1つだけ適用する
+      let applied = null;
+      let skipped = false;
+      for (const file of poseFiles) {
+        const kind = await this._loadAnyModelFile(file, {
+          animationAllowed: !applied,
+        });
+        if (kind === "animation") applied = file.name;
+        else if (kind === "skipped") skipped = true;
       }
-      if (poseFiles.length > 1) {
-        this._showToast(tr("app.015", poseFiles[0].name), "secondary");
+      if (skipped && applied) {
+        this._showToast(tr("app.015", applied), "secondary");
       }
-      await this._loadPoseFile(poseFiles[0]);
     }
   }
 
@@ -766,6 +800,7 @@ class App {
   _activateModel(id, { moveCamera = true } = {}) {
     const model = this._models.find((item) => item.id === id);
     if (!model) return;
+    this._clearObjectSelection();
     this._activeModelId = id;
     this._vrm = model.vrm;
     this._vrmFile = model.file;
@@ -1027,7 +1062,7 @@ class App {
    * @param {File} file
    * @returns {Promise<boolean>} 成功したら true
    */
-  async _loadPoseFile(file) {
+  async _loadPoseFile(file, preParsedSource = null) {
     const targetModel = this._models.find((item) =>
       item.id === this._activeModelId
     );
@@ -1041,7 +1076,7 @@ class App {
       this._stopRandomAnimationForModel(targetModel);
     }
     try {
-      const source = await this._parseAnimationSource(file);
+      const source = preParsedSource ?? await this._parseAnimationSource(file);
       if (
         source.vrmaExtension && Exporter.isStaticAnimation(source.animations[0])
       ) {
@@ -1070,6 +1105,84 @@ class App {
       this._showToast(err.message || tr("app.021"), "danger");
       return false;
     }
+  }
+
+  // =========================================================
+  // GLB / FBX の振り分け(アニメーション or オブジェクト)
+  // =========================================================
+
+  /**
+   * 解析済みの GLB / FBX / VRMA が「人型キャラクターのアニメーション」かどうか。
+   *  - VRMA(VRMC_vrm_animation)は常にアニメーション
+   *  - アニメーションを持たないファイルは、オブジェクト
+   *  - アニメーションが動かしているノードのうち、人型のボーン(hips・腕・脚など)に
+   *    対応づくものが5本以上ならアニメーション。それ以外(風車の回転のような、物自身の動き)は
+   *    オブジェクトとして読み込み、その動きを再生する
+   */
+  _isCharacterAnimation(source) {
+    if (source.vrmaExtension) return true;
+    const clip = source.animations?.[0];
+    if (!clip) return false;
+    const bones = new Set();
+    for (const track of clip.tracks) {
+      const dot = track.name.lastIndexOf(".");
+      if (dot < 0) continue;
+      const raw = track.name.slice(0, dot).split(/[|/:]/).pop();
+      const bone = source.humanBoneByNodeName?.get(raw) ??
+        this._guessVrmBoneName(raw);
+      if (bone) bones.add(bone);
+    }
+    return bones.size >= 5;
+  }
+
+  /**
+   * GLB / FBX / VRMA を、中身を見てアニメーション(ポーズ)かオブジェクトかに自動で振り分けて読み込む。
+   * @param {File} file
+   * @param {{ animationAllowed?: boolean }} [options] false ならアニメーションは適用しない(複数同時のとき)
+   * @returns {Promise<"animation"|"object"|"skipped"|null>} 失敗したら null
+   */
+  async _loadAnyModelFile(file, { animationAllowed = true } = {}) {
+    if (!POSE_FILE_EXTENSIONS.includes(this._getExtension(file.name))) {
+      this._showToast(tr("app.020"), "danger");
+      return null;
+    }
+    let source;
+    try {
+      source = await this._parseAnimationSource(file);
+    } catch (err) {
+      console.error(err);
+      this._showToast(err.message || tr("app.021"), "danger");
+      return null;
+    }
+    if (!this._isCharacterAnimation(source)) {
+      return (await this._addObjectFromFile(file)) ? "object" : null;
+    }
+    if (!animationAllowed) return "skipped";
+    if (!this._vrm) {
+      this._showToast(tr("app.014"), "warning");
+      return null;
+    }
+    return (await this._loadPoseFile(file, source)) ? "animation" : null;
+  }
+
+  /** GLB / FBX を、アニメーションかどうかの判定をせずにオブジェクトとして追加する。 */
+  async _addObjectFromFile(file) {
+    this._showLoading(true);
+    try {
+      await this._objects.addFromFile(file);
+      this._showToast(tr("obj.005", file.name), "success");
+      return true;
+    } catch (err) {
+      console.error(err);
+      this._showToast(tr("obj.006", err.message), "danger");
+      return false;
+    } finally {
+      this._showLoading(false);
+    }
+  }
+
+  _clearObjectSelection() {
+    if (this._objects?.selectedId !== null) this._objects?.select(null);
   }
 
   /** クリップのうち、回転が対応づいたボーンの数。 */
@@ -2028,6 +2141,7 @@ class App {
 
   /** ボーンリストからの選択 */
   _onBoneSelectFromList(boneName) {
+    this._clearObjectSelection();
     this._boneCtrl.selectBoneByName(boneName);
     this._ui.selectBone(boneName);
     this._boneSphere.show(boneName);
@@ -2035,12 +2149,14 @@ class App {
 
   /** キャンバス上クリックからの選択 */
   _onBoneSelectFromCanvas(boneName) {
+    this._clearObjectSelection();
     this._ui.selectBone(boneName);
     this._boneSphere.show(boneName);
   }
 
   /** 球・モデルどちらにも当たらない場所をクリック → 選択解除 */
   _onDeselect() {
+    this._clearObjectSelection();
     this._ui.clearBoneSelection();
     this._boneSphere.hide();
   }
