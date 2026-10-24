@@ -309,16 +309,33 @@ export class SceneObjects {
     const item = this._items.find((i) => i.id === this._selectedId);
     if (!item) return;
 
-    const slider = (label, min, max, step, value, format, onInput) => {
+    const slider = (
+      label,
+      min,
+      max,
+      step,
+      value,
+      resetValue,
+      format,
+      onInput,
+    ) => {
       const wrap = document.createElement("div");
       wrap.className = "mb-2";
       const head = document.createElement("div");
-      head.className = "d-flex justify-content-between small text-secondary";
+      head.className =
+        "d-flex justify-content-between align-items-center small text-secondary";
       const name = document.createElement("span");
       name.textContent = label;
       const output = document.createElement("span");
+      output.className = "ms-auto me-1";
       output.textContent = format(value);
-      head.append(name, output);
+      const reset = document.createElement("button");
+      reset.type = "button";
+      reset.className = "btn btn-sm btn-outline-secondary py-0 px-1";
+      reset.title = tr("obj.008");
+      reset.innerHTML =
+        `<svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="${ICON_SPRITE}#arrow-counterclockwise"/></svg>`;
+      head.append(name, output, reset);
       const input = document.createElement("input");
       input.type = "range";
       input.className = "form-range";
@@ -327,6 +344,11 @@ export class SceneObjects {
         const v = Number(input.value);
         output.textContent = format(v);
         onInput(v);
+      });
+      reset.addEventListener("click", () => {
+        input.value = String(resetValue);
+        output.textContent = format(resetValue);
+        onInput(resetValue);
       });
       wrap.append(head, input);
       this._controlsEl.append(wrap);
@@ -338,6 +360,7 @@ export class SceneObjects {
       5,
       0.05,
       item.root.scale.x,
+      1,
       (v) => `×${v.toFixed(2)}`,
       (v) => item.root.scale.setScalar(v),
     );
@@ -347,6 +370,7 @@ export class SceneObjects {
       180,
       1,
       Math.round(THREE.MathUtils.radToDeg(item.root.rotation.y)),
+      0,
       (v) => `${Math.round(v)}°`,
       (v) => (item.root.rotation.y = THREE.MathUtils.degToRad(v)),
     );
