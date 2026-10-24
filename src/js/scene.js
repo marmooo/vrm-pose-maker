@@ -18,6 +18,8 @@ const FRAME_MARGIN = 1.1;
 // 通常の視点の近クリップ面。注視点に近づいたときは、距離に応じてこれより小さくする(_updateNearPlane)
 const CAMERA_NEAR = 0.1;
 const CAMERA_NEAR_MIN = 0.005;
+// 揺れ物の重力の既定値(足す分)。0 ならモデル元の設定のまま。設定パネルから変えられる。
+const DEFAULT_GRAVITY = 0.5;
 
 const THEME_BACKGROUND = { dark: "#1a1a2e", light: "#e9edf3" };
 const THEME_GRID = { dark: [0x333333, 0x222222], light: [0x9aa3af, 0xc3cad3] };
@@ -36,6 +38,9 @@ export class SceneManager {
     this._timer = new THREE.Timer();
     this._timer.connect(document);
     this._animationMixers = new Set();
+    // 揺れ物(髪・服)の物理。gravity は各ジョイントの重力に足す強さ(setPhysics を参照)
+    this._physics = { enabled: true, gravity: DEFAULT_GRAVITY };
+    this._springManagers = new WeakMap(); // 物理を無効にしている間も、元の manager を保持する
 
     this._init();
   }
@@ -134,12 +139,13 @@ export class SceneManager {
     this._timer.update();
     const delta = this._timer.getDelta();
 
+    // 編集中でないモデルのアニメーションも止めずに再生し続けるため、
+    // 登録されている全モデルのミキサーを毎フレーム更新する。
+    // 揺れ物(髪・服)の計算は今のポーズを元に行うので、必ずミキサーの更新より後に vrm.update を呼ぶ。
+    for (const mixer of this._animationMixers) mixer.update(delta);
     for (const vrm of this.vrms) vrm.update(delta);
     this._updateSelectionPulses(delta);
     this.sceneObjects?.update(delta);
-    // 編集中でないモデルのアニメーションも止めずに再生し続けるため、
-    // 登録されている全モデルのミキサーを毎フレーム更新する。
-    for (const mixer of this._animationMixers) mixer.update(delta);
 
     // BoneSphere が登録されていれば毎フレーム更新
     if (this.boneSphere) {
@@ -557,6 +563,69 @@ export class SceneManager {
     for (const vrm of this.vrms) this.scene.add(vrm.scene);
     if (this.currentVrm && !this.vrms.includes(this.currentVrm)) {
       this.currentVrm = null;
+    }
+    for (const vrm of this.vrms) this._applyPhysics(vrm);
+  }
+
+  // =========================================================
+  // 揺れ物(髪・服)の物理
+  // =========================================================
+
+  /** 揺れ物の物理の設定(コピー)。{ enabled, gravity } */
+  getPhysics() {
+    return { ...this._physics };
+  }
+
+  /**
+   * 揺れ物(VRM の SpringBone)の物理を設定する。
+   * @param {{ enabled?: boolean, gravity?: number }} options
+   *   gravity: 各ジョイントに元から設定されている重力に足す強さ。VRoid などのモデルは
+   *   全ジョイントの重力が 0 で、体が傾いたり脚を上げたりしても髪や服が下へたれず、
+   *   剛性で元の形に戻ろうとするだけになる。これを足すと、重力で自然にたれ下がる。
+   */
+  setPhysics({ enabled, gravity } = {}) {
+    if (enabled !== undefined) this._physics.enabled = !!enabled;
+    if (gravity !== undefined) this._physics.gravity = Math.max(0, gravity);
+    for (const vrm of this.vrms) this._applyPhysics(vrm);
+  }
+
+  _applyPhysics(vrm) {
+    let manager = this._springManagers.get(vrm);
+    if (!manager) {
+      manager = vrm.springBoneManager;
+      if (!manager) return; // 揺れ物を持たないモデル
+      this._springManagers.set(vrm, manager);
+    }
+    for (const joint of manager.joints) {
+      joint.userData ??= {};
+      joint.userData.baseGravityPower ??= joint.settings.gravityPower;
+      joint.settings.gravityPower = joint.userData.baseGravityPower +
+        this._physics.gravity;
+    }
+    if (this._physics.enabled) {
+      if (!vrm.springBoneManager) {
+        vrm.springBoneManager = manager; // 無効にしていた物理を戻す
+        manager.reset();
+      }
+    } else if (vrm.springBoneManager) {
+      manager.reset(); // 揺れていた髪・服を元の形に戻してから、計算を止める
+      vrm.springBoneManager = null;
+    }
+  }
+
+  /**
+   * 揺れ物を、今のポーズで重力に任せて落ち着いた状態にする。
+   * ポーズを大きく変えた直後は、髪や服がしばらく揺れ続けるので、すぐ撮影したいときに使う。
+   */
+  settlePhysics(seconds = 4) {
+    const steps = Math.round(seconds * 60);
+    for (const vrm of this.vrms) {
+      const manager = vrm.springBoneManager;
+      if (!manager) continue;
+      vrm.humanoid.update(); // 正規化ボーンの今のポーズを実際のボーンへ反映する
+      vrm.scene.updateMatrixWorld(true);
+      manager.reset();
+      for (let i = 0; i < steps; i++) manager.update(1 / 60);
     }
   }
 

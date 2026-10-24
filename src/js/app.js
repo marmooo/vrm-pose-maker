@@ -35,6 +35,8 @@ const MODEL_LIST_URL = document.body.dataset.vrmList || "../vrm/list.txt";
 // 半身・全身撮影ボタンで保存する画像のサイズ(px)。VRoid Hub の 300x400 の2倍(3:4)
 const FRAME_CAPTURE_WIDTH = 600;
 const FRAME_CAPTURE_HEIGHT = 800;
+// 揺れ物の重力の既定値(scene.js の DEFAULT_GRAVITY と同じ値。リセットボタンで戻す先)
+const DEFAULT_PHYSICS_GRAVITY = 0.5;
 // 背景に使える画像/動画の拡張子(MIMEタイプが取れない場合の判定用)
 const BACKGROUND_EXTENSIONS =
   /\.(png|jpe?g|gif|webp|avif|bmp|mp4|webm|mov|m4v|ogv)$/i;
@@ -290,6 +292,31 @@ class App {
       this._scene.setGridVisible(e.target.checked);
     });
 
+    // 揺れ物(髪・服)の物理: ON/OFF、重力の強さ、今のポーズで落ち着かせる
+    document.getElementById("toggle-physics")?.addEventListener(
+      "change",
+      (e) => this._scene.setPhysics({ enabled: e.target.checked }),
+    );
+    document.getElementById("physics-gravity")?.addEventListener(
+      "input",
+      (e) => {
+        this._scene.setPhysics({ gravity: Number(e.target.value) });
+        this._syncPhysicsUi();
+      },
+    );
+    document.getElementById("btn-reset-gravity")?.addEventListener(
+      "click",
+      () => {
+        this._scene.setPhysics({ gravity: DEFAULT_PHYSICS_GRAVITY });
+        this._syncPhysicsUi();
+      },
+    );
+    document.getElementById("btn-settle-physics")?.addEventListener(
+      "click",
+      () => this._scene.settlePhysics(),
+    );
+    this._syncPhysicsUi();
+
     // 表情リセット
     document.getElementById("btn-reset-expressions")?.addEventListener(
       "click",
@@ -396,6 +423,7 @@ class App {
               : null,
         },
         gridVisible: this._scene._grid.visible,
+        physics: this._scene.getPhysics(),
         camera: {
           position: this._scene.camera.position.toArray(),
           quaternion: this._scene.camera.quaternion.toArray(),
@@ -521,6 +549,7 @@ class App {
         this._applyLoadedProject(vrm, model, project.scene);
       }
       this._scene.setVrms(this._models.map((item) => item.vrm));
+      this._restorePhysics(project.scene?.physics);
       // 切り替え用アイコン(顔のサムネイル)は保存されていないので、読み込んだ状態から撮り直す
       for (const item of this._models) {
         item.thumbnail = this._scene.captureFaceThumbnail(item.vrm);
@@ -732,6 +761,27 @@ class App {
         this._showToast(tr("app.015", applied), "secondary");
       }
     }
+  }
+
+  /** 物理の設定(ON/OFF・重力)を画面の入力欄に反映する。 */
+  _syncPhysicsUi() {
+    const { enabled, gravity } = this._scene.getPhysics();
+    const toggle = document.getElementById("toggle-physics");
+    const slider = document.getElementById("physics-gravity");
+    const output = document.getElementById("physics-gravity-value");
+    if (toggle) toggle.checked = enabled;
+    if (slider) slider.value = String(gravity);
+    if (output) output.textContent = gravity.toFixed(2);
+  }
+
+  /** プロジェクトに保存された物理の設定を復元する(古いプロジェクトには無いので、その場合は今の設定のまま)。 */
+  _restorePhysics(physics) {
+    if (!physics) return;
+    this._scene.setPhysics({
+      enabled: physics.enabled,
+      gravity: physics.gravity,
+    });
+    this._syncPhysicsUi();
   }
 
   /** 背景に使える画像/動画ファイルか(MIMEタイプ優先、無ければ拡張子で判定) */

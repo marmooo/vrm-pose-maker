@@ -306,6 +306,23 @@
               <label class="form-check-label small" for="toggle-grid">床グリッドを表示</label>
             </div>
             <hr class="border-secondary">
+            <div class="small fw-bold text-secondary mb-2" title="髪や服が重力でたれ下がるようにします。モデルは重力が設定されていないことが多く、体を傾けたり脚を上げたりしても、そのままでは下へたれません"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#sliders"/></svg>物理(髪・服)</div>
+            <div class="form-check form-switch mb-2">
+              <input class="form-check-input" type="checkbox" role="switch" id="toggle-physics" checked>
+              <label class="form-check-label small" for="toggle-physics">髪と服を物理で揺らす</label>
+            </div>
+            <div class="mb-2">
+              <div class="d-flex justify-content-between align-items-center small text-secondary">
+                <label for="physics-gravity">重力</label>
+                <span id="physics-gravity-value" class="ms-auto me-1">0.50</span>
+                <button type="button" id="btn-reset-gravity" class="btn btn-sm btn-outline-secondary py-0 px-1" title="重力をリセット" aria-label="重力をリセット">
+                  <svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#arrow-counterclockwise"/></svg>
+                </button>
+              </div>
+              <input type="range" class="form-range" id="physics-gravity" min="0" max="2" step="0.05" value="0.5">
+            </div>
+            <button type="button" id="btn-settle-physics" class="btn btn-sm btn-outline-body w-100 mb-3" title="今のポーズで、髪や服を数秒かけて落ち着かせます(ポーズを大きく変えたあと、撮影の前に使います)">髪・服を落ち着かせる</button>
+            <hr class="border-secondary">
             <div class="small fw-bold text-secondary mb-2"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#lightbulb"/></svg>ライト</div>
             <div id="light-controls"></div>
           </div>
