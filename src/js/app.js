@@ -521,6 +521,10 @@ class App {
         this._applyLoadedProject(vrm, model, project.scene);
       }
       this._scene.setVrms(this._models.map((item) => item.vrm));
+      // 切り替え用アイコン(顔のサムネイル)は保存されていないので、読み込んだ状態から撮り直す
+      for (const item of this._models) {
+        item.thumbnail = this._scene.captureFaceThumbnail(item.vrm);
+      }
       await this._objects.restore(project.objects);
       if (project.scene?.lights) {
         this._scene.loadLightsData(project.scene.lights);
