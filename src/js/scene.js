@@ -22,6 +22,23 @@ const CAMERA_NEAR_MIN = 0.005;
 const DEFAULT_GRAVITY = 0.5;
 // 風の揺らぎの既定値。風を吹かせたときに、風が動いているのが見た目で分かるようにするため 0 にはしない。
 const DEFAULT_GUST = 0.5;
+// 布を押し出す相手(体のカプセル)の線分。[根元のボーン, 先端のボーン]。先端が無いボーンは、手のように前腕の向きに延ばす。
+const BODY_SEGMENTS = [
+  ["hips", "pelvis"], // 骨盤(お尻): 左右の股関節を結ぶ線分
+  ["leftUpperLeg", "leftLowerLeg"],
+  ["leftLowerLeg", "leftFoot"],
+  ["rightUpperLeg", "rightLowerLeg"],
+  ["rightLowerLeg", "rightFoot"],
+  ["leftLowerArm", "leftHand"],
+  ["rightLowerArm", "rightHand"],
+  ["leftHand", null],
+  ["rightHand", null],
+];
+const CLOTH_PUSH_MAX = 9; // シェーダーで扱うカプセルの数(BODY_SEGMENTS 以上)
+// スカートのボーンへの重みが、この値を超えた頂点から押し出しを始める(シェーダーの smoothstep の始点と同じ)
+const SKIRT_PUSH_START = 0.1;
+// 体の半径を測るとき、ボーンへの影響が強い(重みがこれ以上の)頂点だけを使う
+const MIN_SKIN_WEIGHT = 0.6;
 
 const THEME_BACKGROUND = { dark: "#1a1a2e", light: "#e9edf3" };
 const THEME_GRID = { dark: [0x333333, 0x222222], light: [0x9aa3af, 0xc3cad3] };
@@ -46,7 +63,9 @@ export class SceneManager {
       gravity: DEFAULT_GRAVITY,
       wind: { x: 0, y: 0, z: 0 }, // 風が吹いていく向き(ワールド座標)と強さ。x:右 y:上 z:正面(手前)
       gust: DEFAULT_GUST, // 風の強弱の揺らぎ(0〜1)。0 なら一定の風
+      collision: 0, // 補う当たり判定の大きさ(体の太さに対する倍率)。0 なら補わない
     };
+    this._clothPush = new WeakMap(); // vrm → { specs, uniforms, meshes }。体のカプセルの測定結果と、押し出しを仕込んだメッシュ
     this._springManagers = new WeakMap(); // 物理を無効にしている間も、元の manager を保持する
     this._windForce = new THREE.Vector3();
     this._jointForce = new THREE.Vector3();
@@ -581,7 +600,7 @@ export class SceneManager {
   // 揺れ物(髪・服)の物理
   // =========================================================
 
-  /** 揺れ物の物理の設定(コピー)。{ enabled, gravity, wind: {x,y,z}, gust } */
+  /** 揺れ物の物理の設定(コピー)。{ enabled, gravity, wind: {x,y,z}, gust, collision } */
   getPhysics() {
     return { ...this._physics, wind: { ...this._physics.wind } };
   }
@@ -594,20 +613,380 @@ export class SceneManager {
    *   剛性で元の形に戻ろうとするだけになる。これを足すと、重力で自然にたれ下がる。
    *   wind: 風が吹いていく向きと強さ(ワールド座標の x:右 y:上 z:正面側。1 で重力 1 と同じ強さの力)。
    *   gust: 風の強弱の揺らぎ(0〜1)。0 なら一定の風、大きいほど弱まったり強まったりを繰り返す。
+   *   collision: 揺れ物がめり込まないよう、体(胴・脚・腕・手)に補う当たり判定の大きさ(体の太さに対する倍率、0〜)。
+   *   0 なら補わない(読み込みが遅くならないよう、既定は 0)。
    */
-  setPhysics({ enabled, gravity, wind, gust } = {}) {
+  setPhysics({ enabled, gravity, wind, gust, collision } = {}) {
     if (enabled !== undefined) this._physics.enabled = !!enabled;
     if (gravity !== undefined) this._physics.gravity = Math.max(0, gravity);
     if (wind) Object.assign(this._physics.wind, wind);
     if (gust !== undefined) this._physics.gust = Math.min(1, Math.max(0, gust));
+    if (collision !== undefined) {
+      this._physics.collision = Math.max(0, collision);
+    }
     for (const vrm of this.vrms) this._applyPhysics(vrm);
+  }
+
+  /**
+   * 布の頂点を、体(脚・腕)の外へ押し出す。「スカートの中には必ず脚がある」ので、脚の内側に入った布の頂点は必ず間違いで、
+   * 外へ出してよい。揺れ物の判定(ボーンの点だけ)では、ボーンとボーンの間の布が脚を横切ってしまうが、
+   * これは描画される頂点そのものを動かすので、その間の布にも効く。
+   * 対象は、スカートのボーンに強くウェイトされた頂点だけ(肌に密着したタイツや靴は動かさない)。
+   * 半径は、肌の頂点から測った太さの scale 倍。scale が 0 なら何もしない(既定。読み込みを遅くしないため、初めて上げたときに仕込む)。
+   */
+  _applyClothPush(vrm) {
+    const scale = this._physics.collision;
+    let entry = this._clothPush.get(vrm);
+    if (!entry && scale <= 0) return;
+    if (!entry) {
+      entry = this._prepareClothPush(vrm);
+      this._clothPush.set(vrm, entry);
+    }
+    entry.scale = scale;
+    if (scale <= 0) entry.uniforms.clothCount.value = 0;
+  }
+
+  /** メッシュの頂点ごとに、スカートのボーンへの重みの合計(0〜1)を返す。 */
+  _skirtWeights(mesh, skirtBones) {
+    const { skinIndex, skinWeight } = mesh.geometry.attributes;
+    const weights = new Float32Array(skinIndex.count);
+    for (let i = 0; i < weights.length; i++) {
+      let w = 0;
+      for (let k = 0; k < 4; k++) {
+        if (skirtBones.has(mesh.skeleton.bones[skinIndex.getComponent(i, k)])) {
+          w += skinWeight.getComponent(i, k);
+        }
+      }
+      weights[i] = Math.min(1, w);
+    }
+    return weights;
+  }
+
+  /** そのジョイントのボーンから親をたどって、最初に出会うヒューマノイドのボーンが腰か太ももなら、スカート(など腰から下がる物)。 */
+  _isSkirtJoint(vrm, joint, humanoidBones) {
+    const roots = ["hips", "leftUpperLeg", "rightUpperLeg"].map((n) =>
+      vrm.humanoid.getRawBoneNode(n)
+    );
+    for (let node = joint.bone.parent; node; node = node.parent) {
+      if (humanoidBones.has(node)) return roots.includes(node);
+    }
+    return false;
+  }
+
+  _prepareClothPush(vrm) {
+    const uniforms = {
+      clothCount: { value: 0 },
+      clothA: {
+        value: Array.from(
+          { length: CLOTH_PUSH_MAX },
+          () => new THREE.Vector4(),
+        ),
+      },
+      clothB: {
+        value: Array.from(
+          { length: CLOTH_PUSH_MAX },
+          () => new THREE.Vector3(),
+        ),
+      },
+    };
+    const entry = { specs: [], uniforms, scale: 0 };
+
+    // スカートのボーン(ジョイントの根元と先端)の集合
+    const manager = this._springManagers.get(vrm) ?? vrm.springBoneManager;
+    const humanoidBones = new Set(
+      Object.values(vrm.humanoid.rawHumanBones ?? {}).map((b) => b.node),
+    );
+    const skirtBones = new Set();
+    for (const joint of manager?.joints ?? []) {
+      if (!this._isSkirtJoint(vrm, joint, humanoidBones)) continue;
+      skirtBones.add(joint.bone);
+      if (joint.child) skirtBones.add(joint.child);
+    }
+
+    const done = new Set();
+    const meshes = [];
+    // 初期姿勢(立った状態)で、体の太さと、スカートの頂点が体からどれだけ離れているかを測る
+    this._withRestPose(vrm, manager, () => {
+      entry.specs = this._measureBodyCapsules(vrm);
+      vrm.scene.traverse((mesh) => {
+        if (!mesh.isSkinnedMesh) return;
+        const { skinIndex } = mesh.geometry.attributes;
+        if (!skinIndex || done.has(mesh.geometry)) return;
+        const loose = this._skirtWeights(mesh, skirtBones);
+        const any = loose.some((w) => w > 0.2);
+        if (!any) return;
+        done.add(mesh.geometry);
+        meshes.push({ mesh, loose });
+        this._limitRadiusByRestCloth(entry.specs, mesh, loose);
+      });
+    });
+
+    for (const { mesh, loose } of meshes) {
+      mesh.geometry.setAttribute(
+        "clothLoose",
+        new THREE.BufferAttribute(loose, 1),
+      );
+      const rest = mesh.userData.clothRest;
+      const count = loose.length;
+      const slot = (size, offset) => {
+        const array = new Float32Array(count * size);
+        for (let i = 0; i < count; i++) {
+          for (let k = 0; k < size; k++) {
+            array[i * size + k] = rest[i * CLOTH_PUSH_MAX + offset + k];
+          }
+        }
+        return new THREE.BufferAttribute(array, size);
+      };
+      mesh.geometry.setAttribute("clothRest0", slot(4, 0));
+      mesh.geometry.setAttribute("clothRest1", slot(4, 4));
+      mesh.geometry.setAttribute("clothRest2", slot(1, 8));
+      for (const material of [].concat(mesh.material)) {
+        this._patchClothPush(material, uniforms);
+      }
+      const original = mesh.onBeforeRender;
+      mesh.onBeforeRender = (...args) => {
+        original.apply(mesh, args);
+        this._uploadClothPush(entry);
+      };
+    }
+    return entry;
+  }
+
+  /** 一時的に初期姿勢(Tポーズ)にして fn を実行し、終わったら元のポーズに戻す。 */
+  _withRestPose(vrm, manager, fn) {
+    const saved = [];
+    const save = (o) => {
+      if (
+        o.isBone || o.parent === vrm.humanoid.normalizedHumanBonesRoot ||
+        o.isObject3D
+      ) {
+        saved.push([
+          o,
+          o.position.clone(),
+          o.quaternion.clone(),
+          o.scale.clone(),
+        ]);
+      }
+    };
+    // 実際のボーンと、ポーズの編集で動かしている正規化ボーンの両方を覚えておく
+    vrm.scene.traverse((o) => o.isBone && save(o));
+    vrm.humanoid.normalizedHumanBonesRoot.traverse(save);
+    const refresh = () => {
+      vrm.scene.updateMatrixWorld(true);
+      vrm.scene.traverse((o) => o.isSkinnedMesh && o.skeleton.update());
+    };
+    vrm.humanoid.resetNormalizedPose();
+    vrm.humanoid.update();
+    manager?.reset();
+    refresh();
+    try {
+      fn();
+    } finally {
+      for (const [o, position, quaternion, scale] of saved) {
+        o.position.copy(position);
+        o.quaternion.copy(quaternion);
+        o.scale.copy(scale);
+      }
+      vrm.humanoid.update();
+      refresh();
+      manager?.reset(); // 揺れ物の内部の状態も、今のポーズで初期化し直す
+    }
+  }
+
+  /**
+   * 初期姿勢では、スカートは体の外にある。だから各カプセルの半径は、スカートの頂点までの最短距離を超えてはいけない
+   * (超えると、立っているだけでスカートが押し広げられてしまう)。
+   */
+  _limitRadiusByRestCloth(specs, mesh, loose) {
+    const p = new THREE.Vector3();
+    const head = new THREE.Vector3();
+    const ab = new THREE.Vector3();
+    // 頂点ごと・カプセルごとの、初期姿勢での体までの距離(押し出しの半径の上限)。スカートの頂点だけ測る。
+    // シェーダーの属性に合わせて、1 頂点につき 9 個を vec4 + vec4 + float に詰める。
+    const rest = new Float32Array(loose.length * CLOTH_PUSH_MAX).fill(1e3);
+    specs.forEach((spec, n) => {
+      spec.bone.localToWorld(head.copy(spec.head));
+      spec.bone.localToWorld(ab.copy(spec.tail)).sub(head);
+      const lengthSq = Math.max(ab.lengthSq(), 1e-8);
+      for (let i = 0; i < loose.length; i++) {
+        if (loose[i] < SKIRT_PUSH_START) continue; // シェーダーが押し出し始める重みと同じ値で測る
+        mesh.getVertexPosition(i, p).applyMatrix4(mesh.matrixWorld).sub(head);
+        const t = Math.min(1, Math.max(0, p.dot(ab) / lengthSq));
+        rest[i * CLOTH_PUSH_MAX + n] = p.sub(ab.clone().multiplyScalar(t))
+          .length();
+      }
+    });
+    mesh.userData.clothRest = rest;
+  }
+
+  /** MToon の頂点処理に、体のカプセルから頂点を押し出す処理を差し込む。 */
+  _patchClothPush(material, uniforms) {
+    if (!material.isShaderMaterial || material.userData.clothPush) return;
+    material.userData.clothPush = true;
+    const base = material.onBeforeCompile;
+    material.onBeforeCompile = (shader, renderer) => {
+      base.call(material, shader, renderer);
+      Object.assign(shader.uniforms, uniforms);
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          "void main()",
+          `attribute float clothLoose;
+attribute vec4 clothRest0;
+attribute vec4 clothRest1;
+attribute float clothRest2;
+uniform int clothCount;
+uniform vec4 clothA[${CLOTH_PUSH_MAX}];
+uniform vec3 clothB[${CLOTH_PUSH_MAX}];
+float clothRestV[${CLOTH_PUSH_MAX}];
+vec3 clothPush(vec3 w, float loose) {
+  for (int i = 0; i < ${CLOTH_PUSH_MAX}; i++) {
+    if (i >= clothCount) break;
+    vec3 a = clothA[i].xyz;
+    vec3 ab = clothB[i] - a;
+    float t = clamp(dot(w - a, ab) / max(dot(ab, ab), 1e-8), 0.0, 1.0);
+    vec3 d = w - (a + ab * t);
+    float dist = length(d);
+    // この頂点が初期姿勢で体から離れていた距離を、半径の上限にする(立っているだけで布が膨らまないように)
+    float radius = min(clothA[i].w, clothRestV[i] * 0.95);
+    if (dist < radius && dist > 1e-5) w += d / dist * (radius - dist) * loose;
+  }
+  return w;
+}
+void main()`,
+        )
+        .replace(
+          "#include <skinning_vertex>",
+          `#include <skinning_vertex>
+  if (clothCount > 0 && clothLoose > ${SKIRT_PUSH_START.toFixed(2)}) {
+    vec3 clothWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;
+    float clothAmount = smoothstep(${
+            SKIRT_PUSH_START.toFixed(2)
+          }, 0.6, clothLoose);
+    clothRestV[0] = clothRest0.x; clothRestV[1] = clothRest0.y; clothRestV[2] = clothRest0.z; clothRestV[3] = clothRest0.w;
+    clothRestV[4] = clothRest1.x; clothRestV[5] = clothRest1.y; clothRestV[6] = clothRest1.z; clothRestV[7] = clothRest1.w;
+    clothRestV[8] = clothRest2;
+    vec3 clothMoved = clothPush(clothPush(clothWorld, clothAmount), clothAmount);
+    transformed += inverse(mat3(modelMatrix)) * (clothMoved - clothWorld);
+  }`,
+        );
+    };
+    const key = material.customProgramCacheKey;
+    material.customProgramCacheKey = () => `${key.call(material)}|clothPush`;
+    material.needsUpdate = true;
+  }
+
+  /** 描画の直前に、体のカプセルの今の位置(ワールド座標)をシェーダーへ渡す。 */
+  _uploadClothPush(entry) {
+    const { uniforms, specs, scale } = entry;
+    if (scale <= 0) {
+      uniforms.clothCount.value = 0;
+      return;
+    }
+    const a = uniforms.clothA.value;
+    const b = uniforms.clothB.value;
+    const worldScale = new THREE.Vector3();
+    const head = new THREE.Vector3(); // Vector4 に localToWorld を使うと w が掛かって壊れるので、Vector3 で計算してから入れる
+    specs.forEach((spec, i) => {
+      spec.bone.localToWorld(head.copy(spec.head));
+      spec.bone.getWorldScale(worldScale);
+      a[i].set(head.x, head.y, head.z, spec.radius * worldScale.x * scale);
+      spec.bone.localToWorld(b[i].copy(spec.tail));
+    });
+    uniforms.clothCount.value = specs.length;
+  }
+
+  /** 部位ごとのカプセル({ bone, tail(ボーン座標), radius })を、今のポーズの肌の形から測る。 */
+  _measureBodyCapsules(vrm) {
+    vrm.humanoid.update();
+    vrm.scene.updateMatrixWorld(true);
+    const node = (name) => vrm.humanoid.getRawBoneNode(name);
+    const head = new THREE.Vector3();
+    const tail = new THREE.Vector3();
+    const v = new THREE.Vector3();
+
+    // 肌のメッシュ(名前に body を含むもの。無ければ全メッシュ)の頂点を、いちばん強く影響するボーンごとに分ける
+    const skinned = [];
+    vrm.scene.traverse((obj) => {
+      if (obj.isSkinnedMesh) skinned.push(obj);
+    });
+    const bodies = skinned.filter((m) => /body|skin|肌|体/i.test(m.name));
+    const points = new Map(); // ボーン → ワールド座標の頂点(平坦な配列)
+    for (const mesh of bodies.length ? bodies : skinned) {
+      const { skinIndex, skinWeight } = mesh.geometry.attributes;
+      if (!skinIndex) continue;
+      for (let i = 0; i < skinIndex.count; i++) {
+        for (let k = 0; k < 4; k++) {
+          if (skinWeight.getComponent(i, k) < MIN_SKIN_WEIGHT) continue;
+          const bone = mesh.skeleton.bones[skinIndex.getComponent(i, k)];
+          mesh.getVertexPosition(i, v).applyMatrix4(mesh.matrixWorld);
+          let list = points.get(bone);
+          if (!list) points.set(bone, list = []);
+          list.push(v.x, v.y, v.z);
+        }
+      }
+    }
+
+    const specs = [];
+    for (const [rootName, tipName] of BODY_SEGMENTS) {
+      const root = node(rootName);
+      if (!root) continue;
+      const pelvis = tipName === "pelvis";
+      const tip = tipName && !pelvis ? node(tipName) : null;
+      if (pelvis) {
+        const left = node("leftUpperLeg");
+        const right = node("rightUpperLeg");
+        if (!left || !right) continue;
+        left.getWorldPosition(head);
+        right.getWorldPosition(tail);
+      } else {
+        root.getWorldPosition(head);
+      }
+      if (pelvis) {
+        // 骨盤は、左右の股関節を結ぶ線分
+      } else if (tip) tip.getWorldPosition(tail);
+      else {
+        // 先端が無い(手): 前腕の向きに、手のひらの長さ(前腕の約1/3)ぶん延ばす
+        const forearm = node(rootName.replace("Hand", "LowerArm"));
+        if (!forearm) continue;
+        forearm.getWorldPosition(tail);
+        tail.sub(head).multiplyScalar(-0.35).add(head);
+      }
+      const length = head.distanceTo(tail);
+      if (length < 1e-4) continue;
+
+      // 線分への距離の 90% 点を半径にする(押し出された布が肌の下に隠れないよう、やや外側まで)
+      const list = points.get(root);
+      const axis = tail.clone().sub(head).divideScalar(length);
+      const distances = [];
+      for (let i = 0; list && i < list.length; i += 3) {
+        v.set(list[i], list[i + 1], list[i + 2]).sub(head);
+        const t = Math.min(length, Math.max(0, v.dot(axis)));
+        distances.push(v.sub(axis.clone().multiplyScalar(t)).length());
+      }
+      distances.sort((x, y) => x - y);
+      const radius = distances.length >= 8
+        ? distances[Math.floor(distances.length * 0.9)]
+        : length * 0.2; // 測れなかった部位は、長さの比率で代用する
+
+      const worldScale = root.getWorldScale(new THREE.Vector3());
+      specs.push({
+        bone: root,
+        head: root.worldToLocal(head.clone()),
+        tail: root.worldToLocal(tail.clone()),
+        radius: radius / worldScale.x,
+        pelvis,
+      });
+    }
+    return specs;
   }
 
   /** 風の強弱の倍率(gust が 0 なら常に 1)。2つの周期の違う波を重ねて、不規則に見せる。 */
   _gustFactor(seconds) {
     const { gust } = this._physics;
     if (!gust || seconds === null) return 1;
-    return 1 + gust * (0.6 * Math.sin(seconds * 1.7) + 0.4 * Math.sin(seconds * 3.1 + 1.3));
+    return 1 +
+      gust *
+        (0.6 * Math.sin(seconds * 1.7) + 0.4 * Math.sin(seconds * 3.1 + 1.3));
   }
 
   /**
@@ -632,7 +1011,9 @@ export class SceneManager {
       force.y -= gravity;
       const power = force.length();
       joint.settings.gravityPower = power;
-      if (power > 1e-6) joint.settings.gravityDir.copy(force).divideScalar(power);
+      if (power > 1e-6) {
+        joint.settings.gravityDir.copy(force).divideScalar(power);
+      }
     }
   }
 
@@ -654,6 +1035,7 @@ export class SceneManager {
       this._springManagers.set(vrm, manager);
     }
     this._updateForces(manager, null);
+    this._applyClothPush(vrm);
     if (this._physics.enabled) {
       if (!vrm.springBoneManager) {
         vrm.springBoneManager = manager; // 無効にしていた物理を戻す

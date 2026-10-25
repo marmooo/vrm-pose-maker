@@ -355,6 +355,13 @@
               </div>
               <input type="range" class="form-range" id="wind-gust" min="0" max="1" step="0.05" value="0.5">
             </div>
+            <div class="mb-1">
+              <div class="d-flex justify-content-between small text-secondary" title="スカートの布を、脚・お尻・手の外へ押し出して、太ももが突き出して見えるのを減らします(スカートのように腰から下がる布だけが対象。肌に密着した服は動きません)。0 で無効(既定)。スカートが脚で切れて見えるときに上げてください。上げすぎると不自然に膨らみます">
+                <label for="physics-collision">スカートの突き抜け軽減</label>
+                <span id="physics-collision-value">0.00</span>
+              </div>
+              <input type="range" class="form-range" id="physics-collision" min="0" max="1.5" step="0.05" value="0">
+            </div>
             <div class="mb-2"></div>
             <button type="button" id="btn-settle-physics" class="btn btn-sm btn-outline-body w-100 mb-3" title="今のポーズで、髪や服を数秒かけて落ち着かせます(ポーズを大きく変えたあと、撮影の前に使います)">髪・服を落ち着かせる</button>
             <hr class="border-secondary">

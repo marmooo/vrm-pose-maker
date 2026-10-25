@@ -313,16 +313,26 @@ class App {
         this._syncPhysicsUi();
       },
     );
+    document.getElementById("physics-collision")?.addEventListener(
+      "input",
+      (e) => {
+        this._scene.setPhysics({ collision: Number(e.target.value) });
+        this._syncPhysicsUi();
+      },
+    );
     document.getElementById("btn-settle-physics")?.addEventListener(
       "click",
       () => this._scene.settlePhysics(),
     );
     // 風: 左右・上下・前後の強さと、強弱の揺らぎ
     for (const axis of ["x", "y", "z"]) {
-      document.getElementById(`wind-${axis}`)?.addEventListener("input", (e) => {
-        this._scene.setPhysics({ wind: { [axis]: Number(e.target.value) } });
-        this._syncPhysicsUi();
-      });
+      document.getElementById(`wind-${axis}`)?.addEventListener(
+        "input",
+        (e) => {
+          this._scene.setPhysics({ wind: { [axis]: Number(e.target.value) } });
+          this._syncPhysicsUi();
+        },
+      );
     }
     document.getElementById("wind-gust")?.addEventListener("input", (e) => {
       this._scene.setPhysics({ gust: Number(e.target.value) });
@@ -785,7 +795,8 @@ class App {
 
   /** 物理の設定(ON/OFF・重力)を画面の入力欄に反映する。 */
   _syncPhysicsUi() {
-    const { enabled, gravity, wind, gust } = this._scene.getPhysics();
+    const { enabled, gravity, wind, gust, collision } = this._scene
+      .getPhysics();
     const toggle = document.getElementById("toggle-physics");
     if (toggle) toggle.checked = enabled;
     const set = (id, value, digits) => {
@@ -799,6 +810,7 @@ class App {
     set("wind-y", wind.y, 1);
     set("wind-z", wind.z, 1);
     set("wind-gust", gust, 2);
+    set("physics-collision", collision, 2);
   }
 
   /** プロジェクトに保存された物理の設定を復元する(古いプロジェクトには無いので、その場合は今の設定のまま)。 */
@@ -809,6 +821,7 @@ class App {
       gravity: physics.gravity,
       wind: physics.wind,
       gust: physics.gust,
+      collision: physics.collision,
     });
     this._syncPhysicsUi();
   }
