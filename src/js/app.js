@@ -37,6 +37,8 @@ const FRAME_CAPTURE_WIDTH = 600;
 const FRAME_CAPTURE_HEIGHT = 800;
 // 揺れ物の重力の既定値(scene.js の DEFAULT_GRAVITY と同じ値。リセットボタンで戻す先)
 const DEFAULT_PHYSICS_GRAVITY = 0.5;
+// 風の揺らぎの既定値(scene.js の DEFAULT_GUST と同じ値。風のリセットで戻す先)
+const DEFAULT_WIND_GUST = 0.5;
 // 背景に使える画像/動画の拡張子(MIMEタイプが取れない場合の判定用)
 const BACKGROUND_EXTENSIONS =
   /\.(png|jpe?g|gif|webp|avif|bmp|mp4|webm|mov|m4v|ogv)$/i;
@@ -315,6 +317,24 @@ class App {
       "click",
       () => this._scene.settlePhysics(),
     );
+    // 風: 左右・上下・前後の強さと、強弱の揺らぎ
+    for (const axis of ["x", "y", "z"]) {
+      document.getElementById(`wind-${axis}`)?.addEventListener("input", (e) => {
+        this._scene.setPhysics({ wind: { [axis]: Number(e.target.value) } });
+        this._syncPhysicsUi();
+      });
+    }
+    document.getElementById("wind-gust")?.addEventListener("input", (e) => {
+      this._scene.setPhysics({ gust: Number(e.target.value) });
+      this._syncPhysicsUi();
+    });
+    document.getElementById("btn-reset-wind")?.addEventListener("click", () => {
+      this._scene.setPhysics({
+        wind: { x: 0, y: 0, z: 0 },
+        gust: DEFAULT_WIND_GUST,
+      });
+      this._syncPhysicsUi();
+    });
     this._syncPhysicsUi();
 
     // 表情リセット
@@ -765,13 +785,20 @@ class App {
 
   /** 物理の設定(ON/OFF・重力)を画面の入力欄に反映する。 */
   _syncPhysicsUi() {
-    const { enabled, gravity } = this._scene.getPhysics();
+    const { enabled, gravity, wind, gust } = this._scene.getPhysics();
     const toggle = document.getElementById("toggle-physics");
-    const slider = document.getElementById("physics-gravity");
-    const output = document.getElementById("physics-gravity-value");
     if (toggle) toggle.checked = enabled;
-    if (slider) slider.value = String(gravity);
-    if (output) output.textContent = gravity.toFixed(2);
+    const set = (id, value, digits) => {
+      const slider = document.getElementById(id);
+      const output = document.getElementById(`${id}-value`);
+      if (slider) slider.value = String(value);
+      if (output) output.textContent = value.toFixed(digits);
+    };
+    set("physics-gravity", gravity, 2);
+    set("wind-x", wind.x, 1);
+    set("wind-y", wind.y, 1);
+    set("wind-z", wind.z, 1);
+    set("wind-gust", gust, 2);
   }
 
   /** プロジェクトに保存された物理の設定を復元する(古いプロジェクトには無いので、その場合は今の設定のまま)。 */
@@ -780,6 +807,8 @@ class App {
     this._scene.setPhysics({
       enabled: physics.enabled,
       gravity: physics.gravity,
+      wind: physics.wind,
+      gust: physics.gust,
     });
     this._syncPhysicsUi();
   }

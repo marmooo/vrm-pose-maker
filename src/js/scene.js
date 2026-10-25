@@ -20,6 +20,8 @@ const CAMERA_NEAR = 0.1;
 const CAMERA_NEAR_MIN = 0.005;
 // 揺れ物の重力の既定値(足す分)。0 ならモデル元の設定のまま。設定パネルから変えられる。
 const DEFAULT_GRAVITY = 0.5;
+// 風の揺らぎの既定値。風を吹かせたときに、風が動いているのが見た目で分かるようにするため 0 にはしない。
+const DEFAULT_GUST = 0.5;
 
 const THEME_BACKGROUND = { dark: "#1a1a2e", light: "#e9edf3" };
 const THEME_GRID = { dark: [0x333333, 0x222222], light: [0x9aa3af, 0xc3cad3] };
@@ -39,8 +41,15 @@ export class SceneManager {
     this._timer.connect(document);
     this._animationMixers = new Set();
     // 揺れ物(髪・服)の物理。gravity は各ジョイントの重力に足す強さ(setPhysics を参照)
-    this._physics = { enabled: true, gravity: DEFAULT_GRAVITY };
+    this._physics = {
+      enabled: true,
+      gravity: DEFAULT_GRAVITY,
+      wind: { x: 0, y: 0, z: 0 }, // 風が吹いていく向き(ワールド座標)と強さ。x:右 y:上 z:正面(手前)
+      gust: DEFAULT_GUST, // 風の強弱の揺らぎ(0〜1)。0 なら一定の風
+    };
     this._springManagers = new WeakMap(); // 物理を無効にしている間も、元の manager を保持する
+    this._windForce = new THREE.Vector3();
+    this._jointForce = new THREE.Vector3();
 
     this._init();
   }
@@ -143,6 +152,7 @@ export class SceneManager {
     // 登録されている全モデルのミキサーを毎フレーム更新する。
     // 揺れ物(髪・服)の計算は今のポーズを元に行うので、必ずミキサーの更新より後に vrm.update を呼ぶ。
     for (const mixer of this._animationMixers) mixer.update(delta);
+    this._updateWind(this._timer.getElapsed());
     for (const vrm of this.vrms) vrm.update(delta);
     this._updateSelectionPulses(delta);
     this.sceneObjects?.update(delta);
@@ -571,9 +581,9 @@ export class SceneManager {
   // 揺れ物(髪・服)の物理
   // =========================================================
 
-  /** 揺れ物の物理の設定(コピー)。{ enabled, gravity } */
+  /** 揺れ物の物理の設定(コピー)。{ enabled, gravity, wind: {x,y,z}, gust } */
   getPhysics() {
-    return { ...this._physics };
+    return { ...this._physics, wind: { ...this._physics.wind } };
   }
 
   /**
@@ -582,11 +592,58 @@ export class SceneManager {
    *   gravity: 各ジョイントに元から設定されている重力に足す強さ。VRoid などのモデルは
    *   全ジョイントの重力が 0 で、体が傾いたり脚を上げたりしても髪や服が下へたれず、
    *   剛性で元の形に戻ろうとするだけになる。これを足すと、重力で自然にたれ下がる。
+   *   wind: 風が吹いていく向きと強さ(ワールド座標の x:右 y:上 z:正面側。1 で重力 1 と同じ強さの力)。
+   *   gust: 風の強弱の揺らぎ(0〜1)。0 なら一定の風、大きいほど弱まったり強まったりを繰り返す。
    */
-  setPhysics({ enabled, gravity } = {}) {
+  setPhysics({ enabled, gravity, wind, gust } = {}) {
     if (enabled !== undefined) this._physics.enabled = !!enabled;
     if (gravity !== undefined) this._physics.gravity = Math.max(0, gravity);
+    if (wind) Object.assign(this._physics.wind, wind);
+    if (gust !== undefined) this._physics.gust = Math.min(1, Math.max(0, gust));
     for (const vrm of this.vrms) this._applyPhysics(vrm);
+  }
+
+  /** 風の強弱の倍率(gust が 0 なら常に 1)。2つの周期の違う波を重ねて、不規則に見せる。 */
+  _gustFactor(seconds) {
+    const { gust } = this._physics;
+    if (!gust || seconds === null) return 1;
+    return 1 + gust * (0.6 * Math.sin(seconds * 1.7) + 0.4 * Math.sin(seconds * 3.1 + 1.3));
+  }
+
+  /**
+   * 各ジョイントにかかる外力を、モデル元の重力 + 追加の重力 + 風 の合計にする。
+   * three-vrm は外力を「gravityDir × gravityPower」で受け取るので、合計のベクトルを向きと大きさに分けて渡す。
+   * @param {number|null} seconds 経過時間(風の揺らぎ用)。null なら揺らぎ無し(落ち着かせる計算用)
+   */
+  _updateForces(manager, seconds) {
+    const { gravity, wind } = this._physics;
+    const k = this._gustFactor(seconds);
+    this._windForce.set(wind.x * k, wind.y * k, wind.z * k);
+    for (const joint of manager.joints) {
+      joint.userData ??= {};
+      if (!joint.userData.baseForce) {
+        joint.userData.baseForce = joint.settings.gravityDir
+          .clone()
+          .multiplyScalar(joint.settings.gravityPower);
+      }
+      const force = this._jointForce
+        .copy(joint.userData.baseForce)
+        .add(this._windForce);
+      force.y -= gravity;
+      const power = force.length();
+      joint.settings.gravityPower = power;
+      if (power > 1e-6) joint.settings.gravityDir.copy(force).divideScalar(power);
+    }
+  }
+
+  /** 毎フレーム呼ぶ。風に揺らぎがあるときだけ、外力を更新し直す。 */
+  _updateWind(seconds) {
+    const { enabled, gust, wind } = this._physics;
+    if (!enabled || !gust || !(wind.x || wind.y || wind.z)) return;
+    for (const vrm of this.vrms) {
+      const manager = vrm.springBoneManager;
+      if (manager) this._updateForces(manager, seconds);
+    }
   }
 
   _applyPhysics(vrm) {
@@ -596,12 +653,7 @@ export class SceneManager {
       if (!manager) return; // 揺れ物を持たないモデル
       this._springManagers.set(vrm, manager);
     }
-    for (const joint of manager.joints) {
-      joint.userData ??= {};
-      joint.userData.baseGravityPower ??= joint.settings.gravityPower;
-      joint.settings.gravityPower = joint.userData.baseGravityPower +
-        this._physics.gravity;
-    }
+    this._updateForces(manager, null);
     if (this._physics.enabled) {
       if (!vrm.springBoneManager) {
         vrm.springBoneManager = manager; // 無効にしていた物理を戻す
@@ -625,6 +677,7 @@ export class SceneManager {
       vrm.humanoid.update(); // 正規化ボーンの今のポーズを実際のボーンへ反映する
       vrm.scene.updateMatrixWorld(true);
       manager.reset();
+      this._updateForces(manager, null); // 揺らぎの無い、平均的な風で落ち着かせる
       for (let i = 0; i < steps; i++) manager.update(1 / 60);
     }
   }

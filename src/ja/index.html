@@ -321,6 +321,41 @@
               </div>
               <input type="range" class="form-range" id="physics-gravity" min="0" max="2" step="0.05" value="0.5">
             </div>
+            <div class="d-flex justify-content-between align-items-center small text-secondary mt-3 mb-1" title="髪や服が風になびきます。向きは正面から見たワールド座標で、右・上・手前(正面側)が + です">
+              <span>風(吹いていく向き)</span>
+              <button type="button" id="btn-reset-wind" class="btn btn-sm btn-outline-secondary py-0 px-1" title="風をリセット" aria-label="風をリセット">
+                <svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#arrow-counterclockwise"/></svg>
+              </button>
+            </div>
+            <div class="mb-1">
+              <div class="d-flex justify-content-between small text-secondary">
+                <label for="wind-x">左 ⟷ 右</label>
+                <span id="wind-x-value">0.0</span>
+              </div>
+              <input type="range" class="form-range" id="wind-x" min="-2" max="2" step="0.1" value="0">
+            </div>
+            <div class="mb-1">
+              <div class="d-flex justify-content-between small text-secondary">
+                <label for="wind-y">下 ⟷ 上</label>
+                <span id="wind-y-value">0.0</span>
+              </div>
+              <input type="range" class="form-range" id="wind-y" min="-2" max="2" step="0.1" value="0">
+            </div>
+            <div class="mb-1">
+              <div class="d-flex justify-content-between small text-secondary">
+                <label for="wind-z">後ろ ⟷ 前</label>
+                <span id="wind-z-value">0.0</span>
+              </div>
+              <input type="range" class="form-range" id="wind-z" min="-2" max="2" step="0.1" value="0">
+            </div>
+            <div class="mb-1">
+              <div class="d-flex justify-content-between small text-secondary">
+                <label for="wind-gust">風の揺らぎ(強弱)</label>
+                <span id="wind-gust-value">0.50</span>
+              </div>
+              <input type="range" class="form-range" id="wind-gust" min="0" max="1" step="0.05" value="0.5">
+            </div>
+            <div class="mb-2"></div>
             <button type="button" id="btn-settle-physics" class="btn btn-sm btn-outline-body w-100 mb-3" title="今のポーズで、髪や服を数秒かけて落ち着かせます(ポーズを大きく変えたあと、撮影の前に使います)">髪・服を落ち着かせる</button>
             <hr class="border-secondary">
             <div class="small fw-bold text-secondary mb-2"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#lightbulb"/></svg>ライト</div>
