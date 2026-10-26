@@ -147,38 +147,100 @@ export class UIManager {
 
     this._boneListContainer.innerHTML = "";
 
-    // グループごとにセクションを作成
-    let currentGroup = null;
-    let groupEl = null;
-
+    // グループごとにまとめる(VRM に存在するボーンだけ)
+    const groups = [];
     for (const { group, name, label } of BONE_LIST) {
       if (!this._availableBones.has(name)) continue;
+      if (groups.at(-1)?.group !== group) groups.push({ group, items: [] });
+      groups.at(-1).items.push({ name, label });
+    }
 
-      // グループヘッダ
-      if (group !== currentGroup) {
-        currentGroup = group;
-        const header = document.createElement("div");
-        header.className = "bone-group-header";
-        header.textContent = group;
-        this._boneListContainer.appendChild(header);
-
-        groupEl = document.createElement("div");
-        groupEl.className = "bone-group";
-        this._boneListContainer.appendChild(groupEl);
-      }
-
-      // ボーン行
+    const createRow = (name, label) => {
       const row = document.createElement("div");
-      row.className = "bone-item";
+      row.className = "bone-item small";
       row.dataset.bone = name;
       row.textContent = label;
-
       row.addEventListener("click", () => {
         this.selectBone(name);
         this._callbacks.onBoneSelect(name);
       });
+      return row;
+    };
+    const createHeader = (text) => {
+      const header = document.createElement("div");
+      header.className = "bone-group-header small";
+      header.textContent = text;
+      return header;
+    };
+    const capitalize = (text) => text.charAt(0).toUpperCase() + text.slice(1);
+    const SIDE = /^(Left |Right |左|右)/;
+    // 左右ペアの列では見出しに左右が出るので、各ボーン名の先頭の「左」「右」(Left / Right)は省く
+    const stripSide = (label) => capitalize(label.replace(SIDE, ""));
 
-      groupEl.appendChild(row);
+    // 左のグループごとに、同じ部位(leftHand と rightHand など)を持つ右のグループを探して組にする
+    const partsOf = (items, side) =>
+      new Set(items.map((item) => item.name.replace(side, "")));
+    const pairOf = new Map(); // 左グループの番号 → 右グループの番号
+    const consumed = new Set(); // 左と組にして並べた、右グループの番号
+    groups.forEach((g, i) => {
+      if (!g.items[0].name.startsWith("left")) return;
+      const leftParts = partsOf(g.items, /^left/);
+      let best = -1;
+      let bestCount = 0;
+      for (let j = i + 1; j < groups.length; j++) {
+        if (consumed.has(j) || !groups[j].items[0].name.startsWith("right")) {
+          continue;
+        }
+        const count = [...partsOf(groups[j].items, /^right/)].filter((p) =>
+          leftParts.has(p)
+        ).length;
+        if (count > bestCount) {
+          [best, bestCount] = [j, count];
+        }
+      }
+      if (best >= 0) {
+        pairOf.set(i, best);
+        consumed.add(best);
+      }
+    });
+
+    for (let i = 0; i < groups.length; i++) {
+      if (consumed.has(i)) continue; // 左と組にして、すでに並べた
+      const { group, items } = groups[i];
+      if (pairOf.has(i)) {
+        const next = groups[pairOf.get(i)];
+        // 左を左の列・右を右の列に並べる(同じ部位が同じ行に並ぶ)
+        const grid = document.createElement("div");
+        grid.className = "bone-pair";
+        grid.append(createHeader(group), createHeader(next.group));
+        const rightByPart = new Map(
+          next.items.map((item) => [item.name.replace(/^right/, ""), item]),
+        );
+        const used = new Set();
+        const empty = () => document.createElement("div");
+        for (const item of items) {
+          const part = item.name.replace(/^left/, "");
+          const right = rightByPart.get(part);
+          used.add(part);
+          grid.append(
+            createRow(item.name, stripSide(item.label)),
+            right ? createRow(right.name, stripSide(right.label)) : empty(),
+          );
+        }
+        for (const [part, item] of rightByPart) {
+          if (used.has(part)) continue;
+          grid.append(empty(), createRow(item.name, stripSide(item.label)));
+        }
+        this._boneListContainer.appendChild(grid);
+        continue;
+      }
+      this._boneListContainer.appendChild(createHeader(group));
+      const groupEl = document.createElement("div");
+      groupEl.className = "bone-group";
+      for (const { name, label } of items) {
+        groupEl.appendChild(createRow(name, label));
+      }
+      this._boneListContainer.appendChild(groupEl);
     }
   }
 
