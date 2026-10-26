@@ -1,4 +1,5 @@
 /** VRMA / project export helpers */
+import * as THREE from "three";
 import { createGLTFLoader } from "./gltf-loader.js";
 import { ALL_BONE_NAMES } from "./bone-hierarchy.js";
 
@@ -10,7 +11,7 @@ export class Exporter {
    * （glTF/VRMAの仕様上どちらの形でも有効）。そうすることで、ファイル保存でも
    * クリップボードへのコピーでも同じ JSON テキストをそのまま使い回せる。
    */
-  static _buildVrmaJson(vrm, expressionNames = []) {
+  static _buildVrmaJson(vrm, expressionNames = [], clip = null) {
     const nodes = [],
       humanBones = {},
       channels = [],
@@ -34,28 +35,73 @@ export class Exporter {
           ? data.length
           : data.length / (type === "VEC3" ? 3 : 4),
         type,
-        min: type === "SCALAR" ? [0] : undefined,
-        max: type === "SCALAR" ? [1] : undefined,
+        min: type === "SCALAR" ? [Math.min(...data)] : undefined,
+        max: type === "SCALAR" ? [Math.max(...data)] : undefined,
       }) - 1;
       return accessor;
     };
-    const time = push([0, 1], "SCALAR");
+    const time = clip ? -1 : push([0, 1], "SCALAR"); // 静止ポーズ用の時刻列(動きの場合はトラックごとに持つ)
     const addTrack = (node, path, value, type) => {
       const output = push([...value, ...value], type);
       const sampler =
         samplers.push({ input: time, output, interpolation: "STEP" }) - 1;
       channels.push({ sampler, target: { node, path } });
     };
+    // アニメーション: クリップのトラックをそのまま書き出す(トラックごとに自分の時刻列を持つ)
+    const addClipTrack = (node, path, track, type) => {
+      const stride = type === "VEC4" ? 4 : 3;
+      const values = Array.from(Exporter._plainTrackValues(track, stride));
+      // VRM0 は前後(X/Z)の向きが逆。VRMA(VRM1の向き)として書き出すため、読み込み時の反転を元に戻す
+      if (vrm.meta?.metaVersion === "0") {
+        for (let i = 0; i < values.length; i += stride) {
+          values[i] *= -1;
+          values[i + 2] *= -1;
+        }
+      }
+      const input = push(Array.from(track.times), "SCALAR");
+      const output = push(values, type);
+      const interpolation =
+        track.getInterpolation() === THREE.InterpolateDiscrete
+          ? "STEP"
+          : "LINEAR";
+      const sampler = samplers.push({ input, output, interpolation }) - 1;
+      channels.push({ sampler, target: { node, path } });
+    };
+    const clipTracks = new Map(); // ノードのuuid → { rotation, translation }
+    for (const track of clip?.tracks ?? []) {
+      const dot = track.name.lastIndexOf(".");
+      const property = track.name.slice(dot + 1);
+      const key = property === "quaternion"
+        ? "rotation"
+        : property === "position"
+        ? "translation"
+        : null;
+      if (!key) continue;
+      const uuid = track.name.slice(0, dot);
+      if (!clipTracks.has(uuid)) clipTracks.set(uuid, {});
+      clipTracks.get(uuid)[key] = track;
+    }
     for (const boneName of ALL_BONE_NAMES) {
       const bone = vrm.humanoid.getNormalizedBoneNode(boneName);
       if (!bone) continue;
       const node = nodes.push({ name: boneName }) - 1;
       humanBones[boneName] = { node };
+      if (clip) {
+        const tracks = clipTracks.get(bone.uuid) ?? {};
+        if (tracks.rotation) {
+          addClipTrack(node, "rotation", tracks.rotation, "VEC4");
+        }
+        if (boneName === "hips" && tracks.translation) {
+          addClipTrack(node, "translation", tracks.translation, "VEC3");
+        }
+        continue;
+      }
       addTrack(node, "rotation", bone.quaternion.toArray(), "VEC4");
       if (boneName === "hips") {
         addTrack(node, "translation", bone.position.toArray(), "VEC3");
       }
     }
+    if (clip) expressionNames = []; // 表情は静止ポーズのときだけ書き出す
     const preset = {}, custom = {};
     for (const name of expressionNames) {
       if (/^look(?:Up|Down|Left|Right)$/i.test(name)) continue;
@@ -86,7 +132,7 @@ export class Exporter {
       extensionsUsed: ["VRMC_vrm_animation"],
       extensions: { VRMC_vrm_animation: extension },
       nodes,
-      animations: [{ name: "Pose", samplers, channels }],
+      animations: [{ name: clip?.name || "Pose", samplers, channels }],
       buffers: [{
         byteLength: bin.byteLength,
         uri: "data:application/octet-stream;base64," +
@@ -97,25 +143,46 @@ export class Exporter {
     };
   }
   /** ポーズを .vrma (JSON形式のglTF) ファイルとしてダウンロードする。 */
-  static saveVrma(vrm, filename = "pose.vrma", expressionNames = []) {
-    const json = Exporter._buildVrmaJson(vrm, expressionNames);
+  static saveVrma(
+    vrm,
+    filename = "pose.vrma",
+    expressionNames = [],
+    clip = null,
+  ) {
+    const json = Exporter._buildVrmaJson(vrm, expressionNames, clip);
     Exporter._download(
       new Blob([JSON.stringify(json)], { type: "model/gltf+json" }),
       filename,
     );
   }
   /** ファイル保存とまったく同じ VRMA(JSON) をそのままテキストとしてクリップボードにコピーする。 */
-  static async copyVrmaToClipboard(vrm, expressionNames = []) {
+  static async copyVrmaToClipboard(vrm, expressionNames = [], clip = null) {
     if (!navigator.clipboard?.writeText) throw new Error(tr("exp.001"));
-    const json = Exporter._buildVrmaJson(vrm, expressionNames);
+    const json = Exporter._buildVrmaJson(vrm, expressionNames, clip);
     await navigator.clipboard.writeText(JSON.stringify(json));
   }
-  /** クリップボードにコピーされたポーズを読み取り、readVrmaPose と同じ形式で返す。 */
+  /** クリップボードにコピーされた VRMA(JSON) を、.vrma ファイルとして読み込める File にして返す。 */
   static async pasteVrmaFromClipboard() {
     if (!navigator.clipboard?.readText) throw new Error(tr("exp.002"));
     const text = await navigator.clipboard.readText();
     if (!text.includes("VRMC_vrm_animation")) throw new Error(tr("exp.003"));
-    return Exporter.readVrmaPose(new Blob([text], { type: "model/gltf+json" }));
+    return Exporter.vrmaFileFromText(text);
+  }
+  static vrmaFileFromText(text) {
+    return new File([text], "clipboard.vrma", { type: "model/gltf+json" });
+  }
+  /** キーフレームトラックの値を素直な配列で返す(CUBICSPLINE は [入力接線, 値, 出力接線] なので値だけ取り出す)。 */
+  static _plainTrackValues(track, stride) {
+    if (track.values.length === track.times.length * stride * 3) {
+      const out = new Float32Array(track.times.length * stride);
+      for (let i = 0; i < track.times.length; i++) {
+        for (let k = 0; k < stride; k++) {
+          out[i * stride + k] = track.values[(i * 3 + 1) * stride + k];
+        }
+      }
+      return out;
+    }
+    return track.values;
   }
   static _arrayBufferToBase64(buffer) {
     const bytes = new Uint8Array(buffer);

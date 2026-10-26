@@ -417,6 +417,7 @@ class App {
         this._vrm,
         `${name}_pose.vrma`,
         this._getExpressionNames(this._vrm),
+        this._getPlayingClip(),
       );
       this._showToast(tr("app.001"), "success");
     });
@@ -426,6 +427,7 @@ class App {
         await Exporter.copyVrmaToClipboard(
           this._vrm,
           this._getExpressionNames(this._vrm),
+          this._getPlayingClip(),
         );
         this._showToast(tr("app.002"), "success");
       } catch (err) {
@@ -435,8 +437,8 @@ class App {
     this._btnPastePose.addEventListener("click", async () => {
       if (!this._vrm) return;
       try {
-        const loadedPose = await Exporter.pasteVrmaFromClipboard();
-        this._applyPose(loadedPose.pose, loadedPose.expressions);
+        // 静止ポーズも動き(アニメーション)も、VRMAファイルを読み込むのと同じ処理で適用する
+        await this._loadPoseFile(await Exporter.pasteVrmaFromClipboard());
       } catch (err) {
         this._showToast(err.message || tr("app.004"), "danger");
       }
@@ -739,11 +741,7 @@ class App {
       const text = e.clipboardData?.getData("text/plain") ?? "";
       if (text.includes("VRMC_vrm_animation") && this._vrm) {
         e.preventDefault();
-        Exporter.readVrmaPose(new Blob([text], { type: "model/gltf+json" }))
-          .then((loaded) => this._applyPose(loaded.pose, loaded.expressions))
-          .catch((err) =>
-            this._showToast(err.message || tr("app.004"), "danger")
-          );
+        this._loadPoseFile(Exporter.vrmaFileFromText(text));
       }
     });
   }
@@ -1805,6 +1803,13 @@ class App {
       this._updateAnimationButton(targetModel);
     }
     return { mixer, action };
+  }
+
+  /** アクティブなモデルで再生中(または一時停止中)の動きのクリップ。静止ポーズや再生なしなら null。 */
+  _getPlayingClip() {
+    const model = this._models.find((item) => item.id === this._activeModelId);
+    const clip = model?.animationAction?.getClip();
+    return clip && !Exporter.isStaticAnimation(clip) ? clip : null;
   }
 
   _toggleAnimation() {
