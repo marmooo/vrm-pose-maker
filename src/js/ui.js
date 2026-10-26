@@ -23,6 +23,21 @@ const BONE_LIST = [
   { group: tr("ui.011"), name: "leftUpperArm", label: tr("ui.013") },
   { group: tr("ui.011"), name: "leftLowerArm", label: tr("ui.014") },
   { group: tr("ui.011"), name: "leftHand", label: tr("ui.015") },
+  // 右腕
+  { group: tr("ui.032"), name: "rightShoulder", label: tr("ui.033") },
+  { group: tr("ui.032"), name: "rightUpperArm", label: tr("ui.034") },
+  { group: tr("ui.032"), name: "rightLowerArm", label: tr("ui.035") },
+  { group: tr("ui.032"), name: "rightHand", label: tr("ui.036") },
+  // 左脚
+  { group: tr("ui.053"), name: "leftUpperLeg", label: tr("ui.054") },
+  { group: tr("ui.053"), name: "leftLowerLeg", label: tr("ui.055") },
+  { group: tr("ui.053"), name: "leftFoot", label: tr("ui.056") },
+  { group: tr("ui.053"), name: "leftToes", label: tr("ui.057") },
+  // 右脚
+  { group: tr("ui.058"), name: "rightUpperLeg", label: tr("ui.059") },
+  { group: tr("ui.058"), name: "rightLowerLeg", label: tr("ui.060") },
+  { group: tr("ui.058"), name: "rightFoot", label: tr("ui.061") },
+  { group: tr("ui.058"), name: "rightToes", label: tr("ui.062") },
   // 左手指
   { group: tr("ui.016"), name: "leftThumbMetacarpal", label: tr("ui.017") },
   { group: tr("ui.016"), name: "leftThumbProximal", label: tr("ui.018") },
@@ -39,11 +54,6 @@ const BONE_LIST = [
   { group: tr("ui.016"), name: "leftLittleProximal", label: tr("ui.029") },
   { group: tr("ui.016"), name: "leftLittleIntermediate", label: tr("ui.030") },
   { group: tr("ui.016"), name: "leftLittleDistal", label: tr("ui.031") },
-  // 右腕
-  { group: tr("ui.032"), name: "rightShoulder", label: tr("ui.033") },
-  { group: tr("ui.032"), name: "rightUpperArm", label: tr("ui.034") },
-  { group: tr("ui.032"), name: "rightLowerArm", label: tr("ui.035") },
-  { group: tr("ui.032"), name: "rightHand", label: tr("ui.036") },
   // 右手指
   { group: tr("ui.037"), name: "rightThumbMetacarpal", label: tr("ui.038") },
   { group: tr("ui.037"), name: "rightThumbProximal", label: tr("ui.039") },
@@ -60,16 +70,6 @@ const BONE_LIST = [
   { group: tr("ui.037"), name: "rightLittleProximal", label: tr("ui.050") },
   { group: tr("ui.037"), name: "rightLittleIntermediate", label: tr("ui.051") },
   { group: tr("ui.037"), name: "rightLittleDistal", label: tr("ui.052") },
-  // 左脚
-  { group: tr("ui.053"), name: "leftUpperLeg", label: tr("ui.054") },
-  { group: tr("ui.053"), name: "leftLowerLeg", label: tr("ui.055") },
-  { group: tr("ui.053"), name: "leftFoot", label: tr("ui.056") },
-  { group: tr("ui.053"), name: "leftToes", label: tr("ui.057") },
-  // 右脚
-  { group: tr("ui.058"), name: "rightUpperLeg", label: tr("ui.059") },
-  { group: tr("ui.058"), name: "rightLowerLeg", label: tr("ui.060") },
-  { group: tr("ui.058"), name: "rightFoot", label: tr("ui.061") },
-  { group: tr("ui.058"), name: "rightToes", label: tr("ui.062") },
 ];
 
 // ボーン名 → 日本語ラベルの逆引き（親ボーン表示用）
