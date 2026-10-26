@@ -10,6 +10,16 @@ body {
   font-family: 'Segoe UI', system-ui, sans-serif;
 }
 
+/* 左右のパネルは、幅を固定する。縮めると、読み込み後に中央の描画領域の幅が決まったとき、パネルの幅が変わって見える */
+#panel-left,
+#panel-right {
+  flex-shrink: 0;
+}
+
+#canvas-wrapper {
+  min-width: 0;
+}
+
 /* Canvas */
 #three-canvas {
   display: block;
