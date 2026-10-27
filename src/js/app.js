@@ -355,6 +355,12 @@ class App {
       },
     );
 
+    // 表情ランダム化
+    document.getElementById("btn-random-expressions")?.addEventListener(
+      "click",
+      () => this._randomizeExpressions(),
+    );
+
     // 操作方式トグル（球 / ギズモ）
     const manipSphereRadio = document.getElementById("manip-mode-sphere");
     const manipGizmoRadio = document.getElementById("manip-mode-gizmo");
@@ -2407,6 +2413,43 @@ class App {
   _onExpressionChange(name, weight) {
     if (!this._vrm?.expressionManager) return;
     this._vrm.expressionManager.setValue(name, weight);
+  }
+
+  /**
+   * 表情をランダムにする。すべてをバラバラに動かすと、口形や感情が混ざって破綻しやすいので、
+   * 「感情を1つ」「口の形を1つ(半分の確率)」「まばたき(1/4の確率)」を選び、
+   * モデル独自の表情はそれぞれ低い確率で加える。
+   */
+  _randomizeExpressions() {
+    const em = this._vrm?.expressionManager;
+    if (!em) return;
+    const names = this._getExpressionNames(this._vrm);
+    const pick = (list) => list[Math.floor(Math.random() * list.length)];
+    const find = (candidates) =>
+      names.filter((n) => candidates.includes(n.toLowerCase()));
+    const emotions = find(["happy", "angry", "sad", "relaxed", "surprised"]);
+    const visemes = find(["aa", "ih", "ou", "ee", "oh"]);
+    const blinks = find(["blink", "blinkleft", "blinkright"]);
+    const presets = new Set([...emotions, ...visemes, ...blinks]);
+    const chosen = new Map();
+    const weight = (min) => min + Math.random() * (1 - min);
+    if (emotions.length) chosen.set(pick(emotions), weight(0.3));
+    if (visemes.length && Math.random() < 0.5) {
+      chosen.set(pick(visemes), weight(0.2));
+    }
+    if (blinks.length && Math.random() < 0.25) chosen.set(pick(blinks), 1);
+    for (const name of names) {
+      if (/^look(?:Up|Down|Left|Right)$/i.test(name)) continue;
+      if (!presets.has(name) && Math.random() < 0.15) {
+        chosen.set(name, weight(0.3));
+      }
+    }
+    for (const name of names) {
+      const value = chosen.get(name) ?? 0;
+      em.setValue(name, value);
+      this._ui.setExpressionSliderValue(name, value);
+    }
+    this._showToast(tr("app.051"), "secondary");
   }
 
   /** すべての表情を 0 に戻す */

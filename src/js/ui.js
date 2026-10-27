@@ -531,6 +531,16 @@ export class UIManager {
     }
   }
 
+  /** 表情スライダー(と数値入力)を指定した値(0〜1)にそろえる。表情自体の変更は呼び出し側で行う */
+  setExpressionSliderValue(name, weight) {
+    const percent = Math.round(Math.max(0, Math.min(1, weight)) * 100);
+    this._expressionControls.querySelectorAll("input[data-expression]").forEach(
+      (el) => {
+        if (el.dataset.expression === name) el.value = percent;
+      },
+    );
+  }
+
   /** すべての表情スライダーを 0 に戻す（表情自体のリセットは呼び出し側で行う） */
   resetExpressionSliders() {
     this._expressionControls.querySelectorAll("input[data-expression]").forEach(

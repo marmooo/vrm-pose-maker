@@ -268,9 +268,14 @@
             <span class="small fw-bold text-secondary">
               <svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#emoji-smile"/></svg>Expressions
             </span>
+            <div class="d-flex gap-1">
+            <button type="button" id="btn-random-expressions" class="btn btn-sm btn-outline-secondary" title="Randomize expressions">
+              <svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#shuffle"/></svg>
+            </button>
             <button type="button" id="btn-reset-expressions" class="btn btn-sm btn-outline-secondary" title="Reset all expressions">
               <svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#arrow-counterclockwise"/></svg>
             </button>
+            </div>
           </div>
           <div id="expression-controls" class="flex-grow-1 overflow-auto p-2">
             <div class="text-secondary small p-2">Please load a VRM</div>
@@ -508,6 +513,7 @@
       "app.048": "Pose reset (including position)",
       "app.049": "Could not capture an image of the model",
       "app.050": "Saved {0}",
+      "app.051": "Expressions randomized",
       "obj.001": "No objects",
       "obj.002": "Scale",
       "obj.003": "Rotation (Y)",
