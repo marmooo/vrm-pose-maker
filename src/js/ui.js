@@ -458,7 +458,7 @@ export class UIManager {
    * VRM 読込後に表情（Expression）スライダーを描画する。
    * @param {string[]} expressionNames
    */
-  buildExpressionControls(expressionNames) {
+  buildExpressionControls(expressionNames, customNames = []) {
     this._expressionControls.innerHTML = "";
 
     if (!expressionNames || expressionNames.length === 0) {
@@ -466,7 +466,18 @@ export class UIManager {
       return;
     }
 
-    for (const name of expressionNames) {
+    // 標準の表情を先に、モデル独自(カスタム)の表情を後に並べ、間に区切り線を引く
+    const custom = new Set(customNames);
+    const standard = expressionNames.filter((name) => !custom.has(name));
+    const extra = expressionNames.filter((name) => custom.has(name));
+    const ordered = [...standard, ...extra];
+
+    for (const name of ordered) {
+      if (extra.length && standard.length && name === extra[0]) {
+        const divider = document.createElement("hr");
+        divider.className = "my-3";
+        this._expressionControls.appendChild(divider);
+      }
       const label = getExpressionLabel(name);
 
       const wrapper = document.createElement("div");

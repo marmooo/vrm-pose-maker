@@ -913,7 +913,10 @@ class App {
     this._boneSphere.setVrm(model.vrm);
     this._boneSphere.hide();
     this._ui.buildBoneList(model.vrm);
-    this._ui.buildExpressionControls(this._getExpressionNames(model.vrm));
+    this._ui.buildExpressionControls(
+      this._getExpressionNames(model.vrm),
+      this._getCustomExpressionNames(model.vrm),
+    );
     this._materialPanel.setVrm(model.vrm);
     this._renderModelList();
     this._setButtonsEnabled(true);
@@ -2195,7 +2198,10 @@ class App {
     for (const [name, value] of Object.entries(expressions)) {
       this._vrm.expressionManager?.setValue(name, value);
     }
-    this._ui.buildExpressionControls(this._getExpressionNames(this._vrm));
+    this._ui.buildExpressionControls(
+      this._getExpressionNames(this._vrm),
+      this._getCustomExpressionNames(this._vrm),
+    );
     const selected = this._boneCtrl.getSelectedBoneName();
     if (selected) {
       const bone = this._vrm.humanoid.getNormalizedBoneNode(selected);
@@ -2409,6 +2415,11 @@ class App {
     return names.filter((name) => name.toLowerCase() !== "neutral");
   }
 
+  /** モデル独自(カスタム)の表情の名前。標準(プリセット)の表情とは区別して表示するために使う。 */
+  _getCustomExpressionNames(vrm) {
+    return Object.keys(vrm?.expressionManager?.customExpressionMap ?? {});
+  }
+
   /** 表情スライダーの変更を VRM に反映する */
   _onExpressionChange(name, weight) {
     if (!this._vrm?.expressionManager) return;
@@ -2417,20 +2428,20 @@ class App {
 
   /**
    * 表情をランダムにする。すべてをバラバラに動かすと、口形や感情が混ざって破綻しやすいので、
-   * 「感情を1つ」「口の形を1つ(半分の確率)」「まばたき(1/4の確率)」を選び、
-   * モデル独自の表情はそれぞれ低い確率で加える。
+   * 「感情を1つ」「口の形を1つ(半分の確率)」「まばたき(1/4の確率)」を選ぶ。
+   * モデル独自(カスタム)の表情は、何を動かすか分からず顔が崩れることがあるので対象にしない。
    */
   _randomizeExpressions() {
     const em = this._vrm?.expressionManager;
     if (!em) return;
     const names = this._getExpressionNames(this._vrm);
+    const presets = em.presetExpressionMap ?? {};
     const pick = (list) => list[Math.floor(Math.random() * list.length)];
     const find = (candidates) =>
-      names.filter((n) => candidates.includes(n.toLowerCase()));
+      names.filter((n) => n in presets && candidates.includes(n));
     const emotions = find(["happy", "angry", "sad", "relaxed", "surprised"]);
     const visemes = find(["aa", "ih", "ou", "ee", "oh"]);
-    const blinks = find(["blink", "blinkleft", "blinkright"]);
-    const presets = new Set([...emotions, ...visemes, ...blinks]);
+    const blinks = find(["blink", "blinkLeft", "blinkRight"]);
     const chosen = new Map();
     const weight = (min) => min + Math.random() * (1 - min);
     if (emotions.length) chosen.set(pick(emotions), weight(0.3));
@@ -2438,12 +2449,6 @@ class App {
       chosen.set(pick(visemes), weight(0.2));
     }
     if (blinks.length && Math.random() < 0.25) chosen.set(pick(blinks), 1);
-    for (const name of names) {
-      if (/^look(?:Up|Down|Left|Right)$/i.test(name)) continue;
-      if (!presets.has(name) && Math.random() < 0.15) {
-        chosen.set(name, weight(0.3));
-      }
-    }
     for (const name of names) {
       const value = chosen.get(name) ?? 0;
       em.setValue(name, value);
