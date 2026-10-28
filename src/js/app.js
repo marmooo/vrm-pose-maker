@@ -121,7 +121,8 @@ class App {
       onBoneReset: (boneName) => this._onBoneReset(boneName),
       onAxisReset: (boneName, axis) => this._onAxisReset(boneName, axis),
       onMirrorPart: () => this._mirrorSelectedPart(),
-      onBonesRandom: (boneNames) => this._onBonesRandom(boneNames),
+      onBonesRandom: (boneNames, options) =>
+        this._onBonesRandom(boneNames, options),
       onBonesReset: (boneNames) => this._onBonesReset(boneNames),
       onExpressionChange: (name, weight) =>
         this._onExpressionChange(name, weight),
@@ -2328,10 +2329,10 @@ class App {
   }
 
   /** 部位(複数ボーン)を、可動域(data/bone-limits.json)の範囲内でランダムなポーズにする */
-  async _onBonesRandom(boneNames) {
+  async _onBonesRandom(boneNames, options = {}) {
     if (!this._vrm) return;
     try {
-      const changed = await randomizeBones(this._vrm, boneNames);
+      const changed = await randomizeBones(this._vrm, boneNames, options);
       for (const name of changed) {
         const node = this._vrm.humanoid.getNormalizedBoneNode(name);
         this._ui.syncSlidersFromBone(name, node.quaternion);

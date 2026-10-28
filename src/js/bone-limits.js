@@ -30,7 +30,7 @@ function toRuntime(def, mirrored) {
     x: range("x"),
     y: range("y"),
     z: range("z"),
-    randomize: def.randomize !== false,
+    randomize: def.randomize ?? true, // true | false | "explicit"
     curl: def.curl ?? null,
   };
 }
@@ -67,7 +67,7 @@ export function loadBoneLimits() {
  * 指定ボーンの可動域を取得(loadBoneLimits 完了後に使う)
  * @param {string} boneName
  * @returns {{order:string, x:[number,number], y:[number,number], z:[number,number],
- *            randomize:boolean, curl:string|null}|null} 角度はラジアン。定義がなければ null
+ *            randomize:boolean|"explicit", curl:string|null}|null} 角度はラジアン。定義がなければ null
  */
 export function getBoneLimit(boneName) {
   return table?.[boneName] ?? null;

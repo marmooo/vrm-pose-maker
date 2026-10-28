@@ -118,7 +118,7 @@ export class UIManager {
    * @param {(boneName: string, axis: string) => void} callbacks.onAxisReset
    * @param {(boneName: string) => void} callbacks.onMirrorPart
    * @param {(name: string, weight: number) => void} callbacks.onExpressionChange
-   * @param {(boneNames: string[]) => void} callbacks.onBonesRandom 部位まとめてランダム
+   * @param {(boneNames: string[], options?: {explicit?: boolean}) => void} callbacks.onBonesRandom 部位まとめてランダム
    * @param {(boneNames: string[]) => void} callbacks.onBonesReset 部位まとめてリセット
    */
   constructor(callbacks) {
@@ -181,10 +181,10 @@ export class UIManager {
     const ICON = (id) =>
       `<svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#${id}"/></svg>`;
     // 部位まとめて操作するボタン組(ランダム / リセット)
-    const createTools = (names, label) => {
+    const createTools = (names, label, randomOptions) => {
       const tools = document.createElement("span");
       tools.className = "bone-tools";
-      const add = (icon, title, callback) => {
+      const add = (icon, title, callback, options) => {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "bone-tool-btn";
@@ -193,11 +193,16 @@ export class UIManager {
         btn.setAttribute("aria-label", title);
         btn.addEventListener("click", (e) => {
           e.stopPropagation();
-          callback(names);
+          callback(names, options);
         });
         tools.appendChild(btn);
       };
-      add("shuffle", tr("ui.096", label), this._callbacks.onBonesRandom);
+      add(
+        "shuffle",
+        tr("ui.096", label),
+        this._callbacks.onBonesRandom,
+        randomOptions,
+      );
       add(
         "arrow-counterclockwise",
         tr("ui.097", label),
@@ -229,6 +234,20 @@ export class UIManager {
     // 親指は Metacarpal、他の指は Proximal が最初の関節
     const isFirstJointOfFinger = (name) =>
       /Thumb.*Metacarpal$|(Index|Middle|Ring|Little)Proximal$/.test(name);
+    // 目の見出し(頭グループ内。目は頭グループ全体のランダムでは動かさず、ここからだけ動かす)
+    const createEyeHeader = (items) => {
+      const header = document.createElement("div");
+      header.className = "bone-finger-header small";
+      const label = document.createElement("span");
+      label.className = "bone-header-label";
+      label.textContent = tr("ui.098");
+      header.appendChild(label);
+      const names = items.map((i) => i.name).filter((n) => /Eye$/.test(n));
+      header.appendChild(
+        createTools(names, label.textContent, { explicit: true }),
+      );
+      return header;
+    };
     const createFingerHeader = (name, items) => {
       const key = fingerKeyOf(name);
       const header = document.createElement("div");
@@ -323,9 +342,24 @@ export class UIManager {
       );
       const groupEl = document.createElement("div");
       groupEl.className = "bone-group";
+      let eyePair = null; // 左右の目は2列に並べる
       for (const { name, label } of items) {
         if (isFirstJointOfFinger(name)) {
           groupEl.appendChild(createFingerHeader(name, items));
+        }
+        if (/^(left|right)Eye$/.test(name)) {
+          if (!eyePair) {
+            groupEl.appendChild(createEyeHeader(items));
+            eyePair = document.createElement("div");
+            eyePair.className = "bone-eye-pair";
+            groupEl.appendChild(eyePair);
+          }
+          // 左目を左の列、右目を右の列に(片方しかない場合は空きを入れる)
+          if (name === "rightEye" && !eyePair.children.length) {
+            eyePair.appendChild(document.createElement("div"));
+          }
+          eyePair.appendChild(createRow(name, label));
+          continue;
         }
         groupEl.appendChild(createRow(name, label));
       }

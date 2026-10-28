@@ -7,6 +7,8 @@ import { getBoneLimit, loadBoneLimits } from "./bone-limits.js";
 const FINGER_RE =
   /^(left|right)(Index|Middle|Ring|Little)(Proximal|Intermediate|Distal)$/;
 
+const EYE_RE = /^(left|right)Eye$/;
+
 const clamp01 = (v) => Math.min(1, Math.max(0, v));
 
 /** 範囲の中央寄りに偏らせた乱数(三角分布)。端ばかりの不自然なポーズを避ける */
@@ -19,13 +21,15 @@ function triangular(lo, hi, rng) {
  * 各軸とも可動域の範囲に収まる。
  * @param {import('@pixiv/three-vrm').VRM} vrm
  * @param {string[]} boneNames
- * @param {{rng?: () => number}} [options]
+ * @param {{rng?: () => number, explicit?: boolean}} [options]
+ *   explicit: 目のように「その部位を直接指定したときだけ」ランダム化するボーン
+ *   (limits の randomize が "explicit")も対象にする
  * @returns {Promise<string[]>} 実際に回転を変更したボーン名
  */
 export async function randomizeBones(
   vrm,
   boneNames,
-  { rng = Math.random } = {},
+  { rng = Math.random, explicit = false } = {},
 ) {
   await loadBoneLimits();
 
@@ -46,7 +50,9 @@ export async function randomizeBones(
   for (const name of boneNames) {
     const limit = getBoneLimit(name);
     const node = vrm.humanoid.getNormalizedBoneNode(name);
-    if (!limit || !node || !limit.randomize) continue;
+    if (!limit || !node || limit.randomize === false) continue;
+    if (limit.randomize === "explicit" && !explicit) continue;
+    if (EYE_RE.test(name)) continue; // 目は下でまとめて(同じ視線方向に)処理する
 
     const v = {
       x: triangular(...limit.x, rng),
@@ -67,6 +73,28 @@ export async function randomizeBones(
 
     node.quaternion.setFromEuler(new THREE.Euler(v.x, v.y, v.z, limit.order));
     changed.push(name);
+  }
+
+  // 目: 左右の目は同じ方向を見る(別々にランダムにすると寄り目・離れ目になって不自然)。
+  // 左右の可動域の共通部分から1つの視線を選び、両方の目に同じ回転を与える。
+  const eyes = boneNames.filter((n) => EYE_RE.test(n));
+  if (explicit && eyes.length) {
+    const limits = eyes.map((n) => getBoneLimit(n)).filter(Boolean);
+    const gaze = {};
+    for (const axis of ["x", "y", "z"]) {
+      const lo = Math.max(...limits.map((l) => l[axis][0]));
+      const hi = Math.min(...limits.map((l) => l[axis][1]));
+      gaze[axis] = lo <= hi ? triangular(lo, hi, rng) : 0;
+    }
+    for (const name of eyes) {
+      const limit = getBoneLimit(name);
+      const node = vrm.humanoid.getNormalizedBoneNode(name);
+      if (!limit || !node) continue;
+      node.quaternion.setFromEuler(
+        new THREE.Euler(gaze.x, gaze.y, gaze.z, limit.order),
+      );
+      changed.push(name);
+    }
   }
   return changed;
 }
