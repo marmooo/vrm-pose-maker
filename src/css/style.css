@@ -76,6 +76,49 @@ body {
   margin-top: 0;
 }
 
+/* 部位見出し・指見出しの「ランダム / リセット」ボタン */
+.bone-group-header,
+.bone-finger-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+}
+
+.bone-header-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bone-finger-header {
+  color: #888;
+  padding: 2px 6px 0;
+  font-size: 0.75rem;
+}
+
+.bone-tools {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 1px;
+}
+
+.bone-tool-btn {
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  cursor: pointer;
+  line-height: 1;
+  padding: 2px 4px;
+}
+
+.bone-tool-btn:hover {
+  background: rgba(255,255,255,0.15);
+  color: #fff;
+}
+
 .bone-group {
   display: flex;
   flex-direction: column;
@@ -95,9 +138,24 @@ body {
   margin-top: 0;
   padding-left: 6px;
   padding-right: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* 左右2列は幅が狭いので、ラベルを全幅で出し、ボタンはその下に並べる */
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 1px;
+}
+
+.bone-pair .bone-group-header .bone-header-label {
+  max-width: 100%;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.bone-pair .bone-group-header .bone-tools {
+  margin-left: -4px;
+  margin-bottom: 2px;
 }
 
 .bone-pair .bone-item {
@@ -438,6 +496,8 @@ input[type="range"] {
 [data-bs-theme="light"] .bone-group-header { color: #6c757d; border-top-color: #dee2e6; }
 [data-bs-theme="light"] .bone-pair { border-top-color: #dee2e6; }
 [data-bs-theme="light"] .bone-item { color: #495057; }
+[data-bs-theme="light"] .bone-finger-header { color: #6c757d; }
+[data-bs-theme="light"] .bone-tool-btn:hover { background: rgba(0, 0, 0, 0.1); color: #000; }
 [data-bs-theme="light"] .bone-item:hover { background: rgba(0, 0, 0, 0.07); color: #000; }
 [data-bs-theme="light"] .bone-item.selected { background: rgba(13, 110, 253, 0.18); color: #0a58ca; }
 [data-bs-theme="light"] .active-model-name { color: var(--bs-emphasis-color); }

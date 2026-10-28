@@ -57,6 +57,7 @@
     <link rel="modulepreload" href="/vrm-pose-maker/js/exporter.js" />
     <link rel="modulepreload" href="/vrm-pose-maker/js/bone-hierarchy.js" />
     <link rel="modulepreload" href="/vrm-pose-maker/js/bone-limits.js" />
+    <link rel="modulepreload" href="/vrm-pose-maker/js/bone-random.js" />
     <link rel="modulepreload" href="/vrm-pose-maker/js/light-panel.js" />
     <link rel="modulepreload" href="/vrm-pose-maker/js/light-gizmo.js" />
     <link rel="modulepreload" href="/vrm-pose-maker/js/material-panel.js" />
@@ -100,9 +101,13 @@
 
       <!-- Left Panel: Bone List -->
       <div id="panel-left" class="bg-body border-end border-secondary d-flex flex-column" style="width:220px; min-width:180px;">
-        <div class="p-2 border-bottom border-secondary">
+        <div class="p-2 border-bottom border-secondary d-flex align-items-center justify-content-between">
           <span class="small fw-bold text-secondary">
             <svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#diagram-3"/></svg>Bones
+          </span>
+          <span class="bone-tools">
+            <button type="button" class="bone-tool-btn" id="bone-all-random" title="Randomize all bones within joint limits" aria-label="Randomize all bones within joint limits"><svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#shuffle"/></svg></button>
+            <button type="button" class="bone-tool-btn" id="bone-all-reset" title="Reset all bones to the initial pose" aria-label="Reset all bones to the initial pose"><svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#arrow-counterclockwise"/></svg></button>
           </span>
         </div>
         <div id="bone-list-container" class="flex-grow-1 overflow-auto p-1">
@@ -514,6 +519,7 @@
       "app.049": "Could not capture an image of the model",
       "app.050": "Saved {0}",
       "app.051": "Expressions randomized",
+      "app.052": "Random pose failed (could not load the joint limit data)",
       "obj.001": "No objects",
       "obj.002": "Scale",
       "obj.003": "Rotation (Y)",
@@ -615,6 +621,13 @@
       "ui.088": "Reset the {0} axis only",
       "ui.089": "<div class=\"text-secondary small p-2\">This VRM has no expressions</div>",
       "ui.090": "Reset this expression to 0",
+      "ui.091": "Thumb",
+      "ui.092": "Index",
+      "ui.093": "Middle",
+      "ui.094": "Ring",
+      "ui.095": "Little",
+      "ui.096": "Randomize \"{0}\" within joint limits",
+      "ui.097": "Reset \"{0}\" to the initial pose",
       "mat.001": "None",
       "mat.002": "Normal",
       "mat.003": "Shading ratio",

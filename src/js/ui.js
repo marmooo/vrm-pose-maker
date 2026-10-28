@@ -118,6 +118,8 @@ export class UIManager {
    * @param {(boneName: string, axis: string) => void} callbacks.onAxisReset
    * @param {(boneName: string) => void} callbacks.onMirrorPart
    * @param {(name: string, weight: number) => void} callbacks.onExpressionChange
+   * @param {(boneNames: string[]) => void} callbacks.onBonesRandom 部位まとめてランダム
+   * @param {(boneNames: string[]) => void} callbacks.onBonesReset 部位まとめてリセット
    */
   constructor(callbacks) {
     this._callbacks = callbacks;
@@ -129,6 +131,16 @@ export class UIManager {
     this._boneControls = document.getElementById("bone-controls");
     this._boneHint = document.getElementById("bone-hint");
     this._expressionControls = document.getElementById("expression-controls");
+
+    // 見出し(Bones)の「全体ランダム / 全体リセット」ボタン。VRM にあるボーン全部が対象
+    document.getElementById("bone-all-random")?.addEventListener(
+      "click",
+      () => this._callbacks.onBonesRandom([...this._availableBones]),
+    );
+    document.getElementById("bone-all-reset")?.addEventListener(
+      "click",
+      () => this._callbacks.onBonesReset([...this._availableBones]),
+    );
   }
 
   /**
@@ -166,10 +178,69 @@ export class UIManager {
       });
       return row;
     };
-    const createHeader = (text) => {
+    const ICON = (id) =>
+      `<svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#${id}"/></svg>`;
+    // 部位まとめて操作するボタン組(ランダム / リセット)
+    const createTools = (names, label) => {
+      const tools = document.createElement("span");
+      tools.className = "bone-tools";
+      const add = (icon, title, callback) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "bone-tool-btn";
+        btn.innerHTML = ICON(icon);
+        btn.title = title;
+        btn.setAttribute("aria-label", title);
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          callback(names);
+        });
+        tools.appendChild(btn);
+      };
+      add("shuffle", tr("ui.096", label), this._callbacks.onBonesRandom);
+      add(
+        "arrow-counterclockwise",
+        tr("ui.097", label),
+        this._callbacks.onBonesReset,
+      );
+      return tools;
+    };
+    const createHeader = (text, names) => {
       const header = document.createElement("div");
       header.className = "bone-group-header small";
-      header.textContent = text;
+      const label = document.createElement("span");
+      label.className = "bone-header-label";
+      label.textContent = text;
+      header.appendChild(label);
+      if (names?.length) header.appendChild(createTools(names, text));
+      return header;
+    };
+    // 指ごとの見出し(各指の最初の関節の前に差し込む)
+    const FINGER_LABELS = {
+      Thumb: tr("ui.091"),
+      Index: tr("ui.092"),
+      Middle: tr("ui.093"),
+      Ring: tr("ui.094"),
+      Little: tr("ui.095"),
+    };
+    const fingerKeyOf = (name) =>
+      name.match(/^((?:left|right)(?:Thumb|Index|Middle|Ring|Little))/)?.[1] ??
+        null;
+    // 親指は Metacarpal、他の指は Proximal が最初の関節
+    const isFirstJointOfFinger = (name) =>
+      /Thumb.*Metacarpal$|(Index|Middle|Ring|Little)Proximal$/.test(name);
+    const createFingerHeader = (name, items) => {
+      const key = fingerKeyOf(name);
+      const header = document.createElement("div");
+      header.className = "bone-finger-header small";
+      const label = document.createElement("span");
+      label.className = "bone-header-label";
+      label.textContent = FINGER_LABELS[key.replace(/^(left|right)/, "")];
+      header.appendChild(label);
+      const names = items.map((i) => i.name).filter((n) =>
+        fingerKeyOf(n) === key
+      );
+      header.appendChild(createTools(names, label.textContent));
       return header;
     };
     const capitalize = (text) => text.charAt(0).toUpperCase() + text.slice(1);
@@ -212,7 +283,10 @@ export class UIManager {
         // 左を左の列・右を右の列に並べる(同じ部位が同じ行に並ぶ)
         const grid = document.createElement("div");
         grid.className = "bone-pair";
-        grid.append(createHeader(group), createHeader(next.group));
+        grid.append(
+          createHeader(group, items.map((i) => i.name)),
+          createHeader(next.group, next.items.map((i) => i.name)),
+        );
         const rightByPart = new Map(
           next.items.map((item) => [item.name.replace(/^right/, ""), item]),
         );
@@ -222,6 +296,13 @@ export class UIManager {
           const part = item.name.replace(/^left/, "");
           const right = rightByPart.get(part);
           used.add(part);
+          if (isFirstJointOfFinger(item.name)) {
+            // 指ごとのランダム/リセット(左右の同じ指を同じ行に並べる)
+            grid.append(
+              createFingerHeader(item.name, items),
+              right ? createFingerHeader(right.name, next.items) : empty(),
+            );
+          }
           grid.append(
             createRow(item.name, stripSide(item.label)),
             right ? createRow(right.name, stripSide(right.label)) : empty(),
@@ -229,15 +310,23 @@ export class UIManager {
         }
         for (const [part, item] of rightByPart) {
           if (used.has(part)) continue;
+          if (isFirstJointOfFinger(item.name)) {
+            grid.append(empty(), createFingerHeader(item.name, next.items));
+          }
           grid.append(empty(), createRow(item.name, stripSide(item.label)));
         }
         this._boneListContainer.appendChild(grid);
         continue;
       }
-      this._boneListContainer.appendChild(createHeader(group));
+      this._boneListContainer.appendChild(
+        createHeader(group, items.map((i) => i.name)),
+      );
       const groupEl = document.createElement("div");
       groupEl.className = "bone-group";
       for (const { name, label } of items) {
+        if (isFirstJointOfFinger(name)) {
+          groupEl.appendChild(createFingerHeader(name, items));
+        }
         groupEl.appendChild(createRow(name, label));
       }
       this._boneListContainer.appendChild(groupEl);

@@ -57,6 +57,7 @@
     <link rel="modulepreload" href="/vrm-pose-maker/js/exporter.js" />
     <link rel="modulepreload" href="/vrm-pose-maker/js/bone-hierarchy.js" />
     <link rel="modulepreload" href="/vrm-pose-maker/js/bone-limits.js" />
+    <link rel="modulepreload" href="/vrm-pose-maker/js/bone-random.js" />
     <link rel="modulepreload" href="/vrm-pose-maker/js/light-panel.js" />
     <link rel="modulepreload" href="/vrm-pose-maker/js/light-gizmo.js" />
     <link rel="modulepreload" href="/vrm-pose-maker/js/material-panel.js" />
@@ -100,9 +101,13 @@
 
       <!-- Left Panel: Bone List -->
       <div id="panel-left" class="bg-body border-end border-secondary d-flex flex-column" style="width:220px; min-width:180px;">
-        <div class="p-2 border-bottom border-secondary">
+        <div class="p-2 border-bottom border-secondary d-flex align-items-center justify-content-between">
           <span class="small fw-bold text-secondary">
             <svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#diagram-3"/></svg>ボーン一覧
+          </span>
+          <span class="bone-tools">
+            <button type="button" class="bone-tool-btn" id="bone-all-random" title="全ボーンを可動域の範囲内でランダムなポーズにする" aria-label="全ボーンを可動域の範囲内でランダムなポーズにする"><svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#shuffle"/></svg></button>
+            <button type="button" class="bone-tool-btn" id="bone-all-reset" title="全ボーンを初期状態に戻す" aria-label="全ボーンを初期状態に戻す"><svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#arrow-counterclockwise"/></svg></button>
           </span>
         </div>
         <div id="bone-list-container" class="flex-grow-1 overflow-auto p-1">
@@ -514,6 +519,7 @@
       "app.049": "モデルを撮影できませんでした",
       "app.050": "{0} を保存しました",
       "app.051": "表情をランダムにしました",
+      "app.052": "ランダムポーズに失敗しました（可動域データを読み込めません）",
       "obj.001": "オブジェクトはありません",
       "obj.002": "拡大率",
       "obj.003": "回転(Y)",
@@ -615,6 +621,13 @@
       "ui.088": "{0} 軸だけをリセット",
       "ui.089": "<div class=\"text-secondary small p-2\">このVRMには表情（Expression）がありません</div>",
       "ui.090": "この表情を0に戻す",
+      "ui.091": "親指",
+      "ui.092": "人差し指",
+      "ui.093": "中指",
+      "ui.094": "薬指",
+      "ui.095": "小指",
+      "ui.096": "「{0}」を可動域の範囲内でランダムなポーズにする",
+      "ui.097": "「{0}」を初期状態に戻す",
       "mat.001": "なし",
       "mat.002": "法線",
       "mat.003": "陰影率",

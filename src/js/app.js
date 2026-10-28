@@ -8,6 +8,7 @@ import { VrmLoader } from "./vrm-loader.js";
 import { BONE_LABELS, UIManager } from "./ui.js";
 import { BoneController } from "./bone-control.js";
 import { BoneSphere } from "./bone-sphere.js";
+import { randomizeBones } from "./bone-random.js";
 import { Exporter } from "./exporter.js";
 import {
   ALL_BONE_NAMES,
@@ -120,6 +121,8 @@ class App {
       onBoneReset: (boneName) => this._onBoneReset(boneName),
       onAxisReset: (boneName, axis) => this._onAxisReset(boneName, axis),
       onMirrorPart: () => this._mirrorSelectedPart(),
+      onBonesRandom: (boneNames) => this._onBonesRandom(boneNames),
+      onBonesReset: (boneNames) => this._onBonesReset(boneNames),
       onExpressionChange: (name, weight) =>
         this._onExpressionChange(name, weight),
     });
@@ -2317,6 +2320,26 @@ class App {
 
     // スライダーを同期
     this._ui.syncSlidersFromBone(boneName, node.quaternion);
+  }
+
+  /** 部位(複数ボーン)をまとめてリセット */
+  _onBonesReset(boneNames) {
+    for (const name of boneNames) this._onBoneReset(name);
+  }
+
+  /** 部位(複数ボーン)を、可動域(data/bone-limits.json)の範囲内でランダムなポーズにする */
+  async _onBonesRandom(boneNames) {
+    if (!this._vrm) return;
+    try {
+      const changed = await randomizeBones(this._vrm, boneNames);
+      for (const name of changed) {
+        const node = this._vrm.humanoid.getNormalizedBoneNode(name);
+        this._ui.syncSlidersFromBone(name, node.quaternion);
+      }
+    } catch (e) {
+      console.error("[vrm-pose-app] randomizeBones failed", e);
+      this._showToast(tr("app.052"), "danger");
+    }
   }
 
   /** 特定の軸（X/Y/Z）だけを初期回転値にリセット */
