@@ -231,9 +231,42 @@ export class UIManager {
     const fingerKeyOf = (name) =>
       name.match(/^((?:left|right)(?:Thumb|Index|Middle|Ring|Little))/)?.[1] ??
         null;
-    // 親指は Metacarpal、他の指は Proximal が最初の関節
-    const isFirstJointOfFinger = (name) =>
-      /Thumb.*Metacarpal$|(Index|Middle|Ring|Little)Proximal$/.test(name);
+    // その指の関節のうち、リストの先頭に来るものか(見出しと関節ボタンを出す位置)
+    const isFirstJointOfFinger = (name, items) =>
+      fingerKeyOf(name) !== null &&
+      items.find((i) => fingerKeyOf(i.name) === fingerKeyOf(name))?.name ===
+        name;
+    // 関節の番号(付け根側から 1, 2, 3)。親指は 中手骨→基節→末節、他の指は 基節→中節→末節
+    const JOINT_NUMBER = { Metacarpal: 1, Intermediate: 2, Distal: 3 };
+    const jointNumberOf = (name) => {
+      const joint = name.match(/(Metacarpal|Proximal|Intermediate|Distal)$/)[1];
+      if (joint === "Proximal") return /Thumb/.test(name) ? 2 : 1;
+      return JOINT_NUMBER[joint];
+    };
+    // 指ごとの関節ボタン(1 2 3 を横に等分して並べる)
+    const createFingerJoints = (name, items) => {
+      const key = fingerKeyOf(name);
+      const fingerLabel = FINGER_LABELS[key.replace(/^(left|right)/, "")];
+      const row = document.createElement("div");
+      row.className = "bone-finger-joints";
+      const byNumber = new Map(
+        items.filter((i) => fingerKeyOf(i.name) === key).map((
+          i,
+        ) => [jointNumberOf(i.name), i]),
+      );
+      for (const n of [1, 2, 3]) {
+        const item = byNumber.get(n);
+        if (!item) {
+          row.appendChild(document.createElement("div"));
+          continue;
+        }
+        const chip = createRow(item.name, String(n));
+        chip.classList.add("bone-joint");
+        chip.title = tr("ui.099", fingerLabel, n);
+        row.appendChild(chip);
+      }
+      return row;
+    };
     // 目の見出し(頭グループ内。目は頭グループ全体のランダムでは動かさず、ここからだけ動かす)
     const createEyeHeader = (items) => {
       const header = document.createElement("div");
@@ -315,12 +348,18 @@ export class UIManager {
           const part = item.name.replace(/^left/, "");
           const right = rightByPart.get(part);
           used.add(part);
-          if (isFirstJointOfFinger(item.name)) {
-            // 指ごとのランダム/リセット(左右の同じ指を同じ行に並べる)
-            grid.append(
-              createFingerHeader(item.name, items),
-              right ? createFingerHeader(right.name, next.items) : empty(),
-            );
+          if (fingerKeyOf(item.name)) {
+            // 指は「見出し(ランダム/リセット)」と「関節 1 2 3」の2行にまとめる。
+            // 左右の同じ指を同じ行に並べる
+            if (isFirstJointOfFinger(item.name, items)) {
+              grid.append(
+                createFingerHeader(item.name, items),
+                right ? createFingerHeader(right.name, next.items) : empty(),
+                createFingerJoints(item.name, items),
+                right ? createFingerJoints(right.name, next.items) : empty(),
+              );
+            }
+            continue;
           }
           grid.append(
             createRow(item.name, stripSide(item.label)),
@@ -329,8 +368,16 @@ export class UIManager {
         }
         for (const [part, item] of rightByPart) {
           if (used.has(part)) continue;
-          if (isFirstJointOfFinger(item.name)) {
-            grid.append(empty(), createFingerHeader(item.name, next.items));
+          if (fingerKeyOf(item.name)) {
+            if (isFirstJointOfFinger(item.name, next.items)) {
+              grid.append(
+                empty(),
+                createFingerHeader(item.name, next.items),
+                empty(),
+                createFingerJoints(item.name, next.items),
+              );
+            }
+            continue;
           }
           grid.append(empty(), createRow(item.name, stripSide(item.label)));
         }
@@ -344,8 +391,12 @@ export class UIManager {
       groupEl.className = "bone-group";
       let eyePair = null; // 左右の目は2列に並べる
       for (const { name, label } of items) {
-        if (isFirstJointOfFinger(name)) {
-          groupEl.appendChild(createFingerHeader(name, items));
+        if (fingerKeyOf(name)) {
+          if (isFirstJointOfFinger(name, items)) {
+            groupEl.appendChild(createFingerHeader(name, items));
+            groupEl.appendChild(createFingerJoints(name, items));
+          }
+          continue;
         }
         if (/^(left|right)Eye$/.test(name)) {
           if (!eyePair) {

@@ -93,15 +93,34 @@ body {
 }
 
 .bone-finger-header {
-  color: #888;
-  padding: 2px 6px 0;
-  font-size: 0.75rem;
+  color: #b5b5b5;
+  padding: 2px 2px 0 6px;
+  font-size: 0.875rem;
+}
+
+/* 指の関節ボタン(1 2 3 を横に等分) */
+.bone-finger-joints {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  padding: 2px 4px 4px;
+}
+
+.bone-finger-joints .bone-item {
+  min-width: 0;
+  padding: 3px 0;
+  text-align: center;
 }
 
 .bone-tools {
   display: inline-flex;
   flex-shrink: 0;
   gap: 1px;
+}
+
+/* 指・目の見出しは幅が狭いので、ボタンの余白を詰めてラベルに幅を回す */
+.bone-finger-header .bone-tool-btn {
+  padding: 2px 3px;
 }
 
 .bone-tool-btn {
@@ -510,7 +529,7 @@ input[type="range"] {
 [data-bs-theme="light"] .bone-group-header { color: #6c757d; border-top-color: #dee2e6; }
 [data-bs-theme="light"] .bone-pair { border-top-color: #dee2e6; }
 [data-bs-theme="light"] .bone-item { color: #495057; }
-[data-bs-theme="light"] .bone-finger-header { color: #6c757d; }
+[data-bs-theme="light"] .bone-finger-header { color: #495057; }
 [data-bs-theme="light"] .bone-tool-btn:hover { background: rgba(0, 0, 0, 0.1); color: #000; }
 [data-bs-theme="light"] .bone-item:hover { background: rgba(0, 0, 0, 0.07); color: #000; }
 [data-bs-theme="light"] .bone-item.selected { background: rgba(13, 110, 253, 0.18); color: #0a58ca; }
