@@ -33,6 +33,10 @@ export async function randomizeBones(
 ) {
   await loadBoneLimits();
 
+  // 可動域は VRM1(+Z 向き)基準。VRM0 はローカルの X/Z の向きが逆(Y 軸まわり180度の
+  // 共役)なので、オイラー角の x と z の符号を反転して適用する。
+  const flip = vrm.meta?.metaVersion === "0" ? -1 : 1;
+
   // 指のカール量: 手ごとに「握り具合」を決め、指ごと・関節ごとに少しだけずらす。
   // 関節をバラバラに乱数で決めると、指が不自然に折れ曲がるため。
   const handCurl = { left: rng(), right: rng() };
@@ -71,7 +75,9 @@ export async function randomizeBones(
       }
     }
 
-    node.quaternion.setFromEuler(new THREE.Euler(v.x, v.y, v.z, limit.order));
+    node.quaternion.setFromEuler(
+      new THREE.Euler(v.x * flip, v.y, v.z * flip, limit.order),
+    );
     changed.push(name);
   }
 
@@ -91,7 +97,7 @@ export async function randomizeBones(
       const node = vrm.humanoid.getNormalizedBoneNode(name);
       if (!limit || !node) continue;
       node.quaternion.setFromEuler(
-        new THREE.Euler(gaze.x, gaze.y, gaze.z, limit.order),
+        new THREE.Euler(gaze.x * flip, gaze.y, gaze.z * flip, limit.order),
       );
       changed.push(name);
     }

@@ -47,6 +47,15 @@ const BONE_MODE = {
 
 const DEFAULT_RADIUS = 0.12;
 
+/**
+ * モデルが向いている正面の、ローカル座標でのZ符号。
+ * VRM1 は +Z 向き、VRM0 は(読込時にシーンを180度回して +Z に揃えている分)
+ * ローカルでは -Z 向きになる。
+ */
+function localFrontSign(vrm) {
+  return vrm?.meta?.metaVersion === "0" ? -1 : 1;
+}
+
 // 目の可動域クランプ（現実的な範囲に収める。左右上下 ±この角度まで）
 const EYE_MAX_ANGLE_DEG = 35;
 
@@ -613,7 +622,9 @@ export class BoneSphere {
       const refNode = headNode ?? this._boneNode.parent ?? this._boneNode;
       const refWorldQ = new THREE.Quaternion();
       refNode.getWorldQuaternion(refWorldQ);
-      const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(refWorldQ);
+      // 顔の正面(VRM0/VRM1 で向きが逆なので、モデルごとに判定する)
+      const forward = new THREE.Vector3(0, 0, localFrontSign(this._vrm))
+        .applyQuaternion(refWorldQ);
       this._group.position.copy(wp).addScaledVector(
         forward,
         this._modelHeight * 0.35,
@@ -905,10 +916,14 @@ export class BoneSphere {
     const lookDirLocal = lookDirWorld.clone()
       .applyQuaternion(parentWorldQ.clone().invert());
 
-    // VRM 目ボーン: 前方 -Z、上 +Y
-    let yaw = Math.atan2(-lookDirLocal.x, -lookDirLocal.z);
+    // 目ボーンの前方はローカルで (0, 0, s)。VRM1 は s=+1、VRM0 は s=-1。
+    // 回転 Ry(yaw)·Rx(pitch) で前方を向けた方向は
+    //   (s·cos(pitch)·sin(yaw), -s·sin(pitch), s·cos(pitch)·cos(yaw))
+    // なので、そこから yaw / pitch を逆算する。
+    const s = localFrontSign(this._vrm);
+    let yaw = Math.atan2(s * lookDirLocal.x, s * lookDirLocal.z);
     let pitch = Math.atan2(
-      lookDirLocal.y,
+      -s * lookDirLocal.y,
       Math.sqrt(lookDirLocal.x ** 2 + lookDirLocal.z ** 2),
     );
 
