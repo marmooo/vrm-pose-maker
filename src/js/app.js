@@ -38,6 +38,9 @@ const FRAME_CAPTURE_WIDTH = 600;
 const FRAME_CAPTURE_HEIGHT = 800;
 // 揺れ物の重力の既定値(scene.js の DEFAULT_GRAVITY と同じ値。リセットボタンで戻す先)
 const DEFAULT_PHYSICS_GRAVITY = 0.5;
+// ランダムポーズの直後に揺れ物を落ち着かせる時間(秒)と、それが不要なボーン
+const RANDOM_SETTLE_SECONDS = 4;
+const RANDOM_NO_SETTLE_RE = /Thumb|Index|Middle|Ring|Little|Eye$|^jaw$/;
 // 風の揺らぎの既定値(scene.js の DEFAULT_GUST と同じ値。風のリセットで戻す先)
 const DEFAULT_WIND_GUST = 0.5;
 // 背景に使える画像/動画の拡張子(MIMEタイプが取れない場合の判定用)
@@ -2336,6 +2339,12 @@ class App {
       for (const name of changed) {
         const node = this._vrm.humanoid.getNormalizedBoneNode(name);
         this._ui.syncSlidersFromBone(name, node.quaternion);
+      }
+      // 髪や服は、ポーズが変わる前の位置のまま体に刺さって見えるので、
+      // 新しいポーズで落ち着かせる(物理が無効のモデル・設定では何もしない)。
+      // 指・目・顎だけを変えたときは、髪や服に影響しないので省く。
+      if (changed.some((n) => !RANDOM_NO_SETTLE_RE.test(n))) {
+        this._scene.settlePhysics(RANDOM_SETTLE_SECONDS, [this._vrm]);
       }
     } catch (e) {
       console.error("[vrm-pose-app] randomizeBones failed", e);

@@ -1050,10 +1050,12 @@ void main()`,
   /**
    * 揺れ物を、今のポーズで重力に任せて落ち着いた状態にする。
    * ポーズを大きく変えた直後は、髪や服がしばらく揺れ続けるので、すぐ撮影したいときに使う。
+   * @param {number} [seconds] 落ち着かせる時間(秒)
+   * @param {object[]} [targets] 対象の VRM(省略すると、読み込んでいる全モデル)
    */
-  settlePhysics(seconds = 4) {
+  settlePhysics(seconds = 4, targets = this.vrms) {
     const steps = Math.round(seconds * 60);
-    for (const vrm of this.vrms) {
+    for (const vrm of targets) {
       const manager = vrm.springBoneManager;
       if (!manager) continue;
       vrm.humanoid.update(); // 正規化ボーンの今のポーズを実際のボーンへ反映する
