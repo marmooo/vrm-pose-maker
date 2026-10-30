@@ -327,6 +327,13 @@ class App {
         this._syncPhysicsUi();
       },
     );
+    document.getElementById("physics-hair-collision")?.addEventListener(
+      "input",
+      (e) => {
+        this._scene.setPhysics({ hairCollision: Number(e.target.value) });
+        this._syncPhysicsUi();
+      },
+    );
     document.getElementById("btn-settle-physics")?.addEventListener(
       "click",
       () => this._scene.settlePhysics(),
@@ -806,7 +813,8 @@ class App {
 
   /** 物理の設定(ON/OFF・重力)を画面の入力欄に反映する。 */
   _syncPhysicsUi() {
-    const { enabled, gravity, wind, gust, collision } = this._scene
+    const { enabled, gravity, wind, gust, collision, hairCollision } = this
+      ._scene
       .getPhysics();
     const toggle = document.getElementById("toggle-physics");
     if (toggle) toggle.checked = enabled;
@@ -822,6 +830,7 @@ class App {
     set("wind-z", wind.z, 1);
     set("wind-gust", gust, 2);
     set("physics-collision", collision, 2);
+    set("physics-hair-collision", hairCollision ?? 0, 2);
   }
 
   /** プロジェクトに保存された物理の設定を復元する(古いプロジェクトには無いので、その場合は今の設定のまま)。 */
@@ -833,6 +842,7 @@ class App {
       wind: physics.wind,
       gust: physics.gust,
       collision: physics.collision,
+      hairCollision: physics.hairCollision,
     });
     this._syncPhysicsUi();
   }

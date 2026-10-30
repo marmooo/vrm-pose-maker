@@ -373,6 +373,13 @@
               </div>
               <input type="range" class="form-range" id="physics-collision" min="0" max="1.5" step="0.05" value="0">
             </div>
+            <div class="mb-1">
+              <div class="d-flex justify-content-between small text-secondary" title="Pushes hair strands out of the neck, shoulders, chest and upper arms so they don't sink into the body. 0 = off (default). Too high makes hair float off the skin, so try 1 or less first.">
+                <label for="physics-hair-collision">Hair clipping fix</label>
+                <span id="physics-hair-collision-value">0.00</span>
+              </div>
+              <input type="range" class="form-range" id="physics-hair-collision" min="0" max="1.5" step="0.05" value="0">
+            </div>
             <div class="mb-2"></div>
             <button type="button" id="btn-settle-physics" class="btn btn-sm btn-outline-body w-100 mb-3" title="Let hair and clothes settle for a few seconds in the current pose (use it after changing the pose a lot, before a screenshot)">Settle hair & clothes</button>
             <hr class="border-secondary">

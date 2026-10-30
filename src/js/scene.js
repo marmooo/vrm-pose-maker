@@ -3,6 +3,10 @@
  */
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import {
+  VRMSpringBoneCollider,
+  VRMSpringBoneColliderShapeCapsule,
+} from "@pixiv/three-vrm";
 
 import { tr } from "./i18n.js";
 // テーマごとの既定の背景色と、床グリッドの色(中心線, 格子線)
@@ -34,6 +38,20 @@ const BODY_SEGMENTS = [
   ["leftHand", null],
   ["rightHand", null],
 ];
+// 髪(頭・首の下に付いた揺れ物)が体にめり込まないよう、揺れ物の当たり判定に足す体のカプセル(首・肩・胸・上腕)。
+// [根元のボーン, 先端のボーン(配列なら、あるものを先頭から使う), 半径に使う分位点(省略時 0.9)]。
+// 胸は断面が楕円(幅 > 奥行き)で、丸いカプセルの半径を幅に合わせると胸の前で髪が浮くので、分位点を下げて奥行き寄りにする。
+const HAIR_SEGMENTS = [
+  ["neck", "head"],
+  ["leftShoulder", "leftUpperArm"],
+  ["rightShoulder", "rightUpperArm"],
+  ["leftUpperArm", "leftLowerArm"],
+  ["rightUpperArm", "rightLowerArm"],
+  ["chest", ["upperChest", "neck"], 0.5],
+  ["upperChest", "neck", 0.5],
+];
+// 最も近い(親をたどって最初に出会う)ヒューマノイドのボーンがこれなら、髪の揺れ物とみなす
+const HAIR_ROOTS = ["head", "neck"];
 const CLOTH_PUSH_MAX = 9; // シェーダーで扱うカプセルの数(BODY_SEGMENTS 以上)
 // スカートのボーンへの重みが、この値を超えた頂点から押し出しを始める(シェーダーの smoothstep の始点と同じ)
 const SKIRT_PUSH_START = 0.1;
@@ -63,9 +81,11 @@ export class SceneManager {
       gravity: DEFAULT_GRAVITY,
       wind: { x: 0, y: 0, z: 0 }, // 風が吹いていく向き(ワールド座標)と強さ。x:右 y:上 z:正面(手前)
       gust: DEFAULT_GUST, // 風の強弱の揺らぎ(0〜1)。0 なら一定の風
-      collision: 0, // 補う当たり判定の大きさ(体の太さに対する倍率)。0 なら補わない
+      collision: 0, // スカートの布を押し出す、体のカプセルの大きさ(体の太さに対する倍率)。0 なら補わない
+      hairCollision: 0, // 髪の揺れ物に足す当たり判定の大きさ(同上)。0 なら足さない
     };
     this._clothPush = new WeakMap(); // vrm → { specs, uniforms, meshes }。体のカプセルの測定結果と、押し出しを仕込んだメッシュ
+    this._hairCollide = new WeakMap(); // vrm → { specs, group, colliders, joints, base, scale, active }。髪用に足した当たり判定
     this._springManagers = new WeakMap(); // 物理を無効にしている間も、元の manager を保持する
     this._windForce = new THREE.Vector3();
     this._jointForce = new THREE.Vector3();
@@ -172,7 +192,10 @@ export class SceneManager {
     // 揺れ物(髪・服)の計算は今のポーズを元に行うので、必ずミキサーの更新より後に vrm.update を呼ぶ。
     for (const mixer of this._animationMixers) mixer.update(delta);
     this._updateWind(this._timer.getElapsed());
-    for (const vrm of this.vrms) vrm.update(delta);
+    for (const vrm of this.vrms) {
+      this._syncHairCollision(vrm); // モデルの拡大縮小に合わせて、髪用の当たり判定の半径を更新する
+      vrm.update(delta);
+    }
     this._updateSelectionPulses(delta);
     this.sceneObjects?.update(delta);
 
@@ -613,16 +636,21 @@ export class SceneManager {
    *   剛性で元の形に戻ろうとするだけになる。これを足すと、重力で自然にたれ下がる。
    *   wind: 風が吹いていく向きと強さ(ワールド座標の x:右 y:上 z:正面側。1 で重力 1 と同じ強さの力)。
    *   gust: 風の強弱の揺らぎ(0〜1)。0 なら一定の風、大きいほど弱まったり強まったりを繰り返す。
-   *   collision: 揺れ物がめり込まないよう、体(胴・脚・腕・手)に補う当たり判定の大きさ(体の太さに対する倍率、0〜)。
+   *   collision: スカートの布を、体(胴・脚・腕・手)のカプセルの外へ押し出す大きさ(体の太さに対する倍率、0〜)。
    *   0 なら補わない(読み込みが遅くならないよう、既定は 0)。
+   *   hairCollision: 髪の揺れ物に、首・肩・胸・上腕の当たり判定を足す大きさ(同じく倍率、0〜)。0 なら足さない。
+   *   大きくしすぎると、髪が肌から浮く(1 で肌のすぐ外 + 髪の hitRadius)。
    */
-  setPhysics({ enabled, gravity, wind, gust, collision } = {}) {
+  setPhysics({ enabled, gravity, wind, gust, collision, hairCollision } = {}) {
     if (enabled !== undefined) this._physics.enabled = !!enabled;
     if (gravity !== undefined) this._physics.gravity = Math.max(0, gravity);
     if (wind) Object.assign(this._physics.wind, wind);
     if (gust !== undefined) this._physics.gust = Math.min(1, Math.max(0, gust));
     if (collision !== undefined) {
       this._physics.collision = Math.max(0, collision);
+    }
+    if (hairCollision !== undefined) {
+      this._physics.hairCollision = Math.max(0, hairCollision);
     }
     for (const vrm of this.vrms) this._applyPhysics(vrm);
   }
@@ -664,13 +692,101 @@ export class SceneManager {
 
   /** そのジョイントのボーンから親をたどって、最初に出会うヒューマノイドのボーンが腰か太ももなら、スカート(など腰から下がる物)。 */
   _isSkirtJoint(vrm, joint, humanoidBones) {
-    const roots = ["hips", "leftUpperLeg", "rightUpperLeg"].map((n) =>
-      vrm.humanoid.getRawBoneNode(n)
-    );
+    return this._isJointUnder(vrm, joint, humanoidBones, [
+      "hips",
+      "leftUpperLeg",
+      "rightUpperLeg",
+    ]);
+  }
+
+  /** そのジョイントのボーンから親をたどって、最初に出会うヒューマノイドのボーンが names のどれかか。 */
+  _isJointUnder(vrm, joint, humanoidBones, names) {
+    const roots = names.map((n) => vrm.humanoid.getRawBoneNode(n));
     for (let node = joint.bone.parent; node; node = node.parent) {
       if (humanoidBones.has(node)) return roots.includes(node);
     }
     return false;
+  }
+
+  /**
+   * 髪の揺れ物(頭・首の下のジョイント)に、体(首・肩・胸・上腕)のカプセルを当たり判定として足す。
+   * 髪のボーンは、体の中へ入ろうとすると体の外へ押し戻されるので、毛束が体にめり込まず外にとどまる。
+   * 布の押し出し(_applyClothPush)と同じ体のカプセルの測定(_measureBodyCapsules)を使い、大きさは hairCollision の倍率で決まる。
+   * hairCollision が 0 のときは足さない(初めて上げたときに仕込む。モデルが元から持つ当たり判定はそのまま使う)。
+   */
+  _applyHairCollision(vrm, manager) {
+    const scale = this._physics.hairCollision;
+    let entry = this._hairCollide.get(vrm);
+    if (!entry && scale <= 0) return;
+    if (!entry) {
+      entry = this._prepareHairCollision(vrm, manager);
+      this._hairCollide.set(vrm, entry);
+    }
+    entry.scale = scale;
+    const active = scale > 0 && entry.colliders.length > 0;
+    if (active !== entry.active) {
+      entry.active = active;
+      for (const joint of entry.joints) {
+        // colliderGroups の配列はスプリング内のジョイントで共有されていることがあるので、push せず作り直す
+        const base = entry.base.get(joint);
+        joint.colliderGroups = active ? [...base, entry.group] : base;
+        // 当たり判定の組が変わったことを manager に知らせる(再登録すると、更新の順序が組み直される)
+        manager.deleteJoint(joint);
+        manager.addJoint(joint);
+      }
+    }
+    this._syncHairCollision(vrm);
+  }
+
+  _prepareHairCollision(vrm, manager) {
+    const entry = {
+      specs: [],
+      group: { colliders: [], name: "vrm-pose-maker:hair" },
+      colliders: [], // { collider, spec }
+      joints: [],
+      base: new Map(), // joint → 元の colliderGroups
+      scale: 0,
+      active: false,
+    };
+    const humanoidBones = new Set(
+      Object.values(vrm.humanoid.rawHumanBones ?? {}).map((b) => b.node),
+    );
+    for (const joint of manager?.joints ?? []) {
+      if (!this._isJointUnder(vrm, joint, humanoidBones, HAIR_ROOTS)) continue;
+      entry.joints.push(joint);
+      entry.base.set(joint, joint.colliderGroups);
+    }
+    if (!entry.joints.length) return entry; // 髪の揺れ物が無いモデル
+
+    // 初期姿勢(Tポーズ)で体の太さを測る
+    this._withRestPose(vrm, manager, () => {
+      entry.specs = this._measureBodyCapsules(vrm, HAIR_SEGMENTS);
+    });
+    for (const spec of entry.specs) {
+      // カプセルは、ボーンの子にしたコライダーの中で「ボーン座標の head〜tail」として持つ(ボーンの動きに追従する)。
+      // 半径はワールド座標の長さで渡す必要があるので、後で _syncHairCollision が入れる。
+      const shape = new VRMSpringBoneColliderShapeCapsule({
+        radius: 0,
+        offset: spec.head.clone(),
+        tail: spec.tail.clone(),
+      });
+      const collider = new VRMSpringBoneCollider(shape);
+      spec.bone.add(collider);
+      entry.group.colliders.push(collider);
+      entry.colliders.push({ collider, spec });
+    }
+    return entry;
+  }
+
+  /** 髪用の当たり判定の半径を、今のボーンの拡大率と collision の倍率に合わせる(毎フレーム呼ぶ。足していなければ何もしない)。 */
+  _syncHairCollision(vrm) {
+    const entry = this._hairCollide.get(vrm);
+    if (!entry?.active) return;
+    const worldScale = this._hairWorldScale ??= new THREE.Vector3();
+    for (const { collider, spec } of entry.colliders) {
+      spec.bone.getWorldScale(worldScale);
+      collider.shape.radius = spec.radius * worldScale.x * entry.scale;
+    }
   }
 
   _prepareClothPush(vrm) {
@@ -895,8 +1011,11 @@ void main()`,
     uniforms.clothCount.value = specs.length;
   }
 
-  /** 部位ごとのカプセル({ bone, tail(ボーン座標), radius })を、今のポーズの肌の形から測る。 */
-  _measureBodyCapsules(vrm) {
+  /**
+   * 部位ごとのカプセル({ bone, head・tail(ボーン座標), radius })を、今のポーズの肌の形から測る。
+   * @param {Array} [segments] 測る部位(BODY_SEGMENTS と同じ形。3つ目の値で、半径に使う分位点を変えられる)
+   */
+  _measureBodyCapsules(vrm, segments = BODY_SEGMENTS) {
     vrm.humanoid.update();
     vrm.scene.updateMatrixWorld(true);
     const node = (name) => vrm.humanoid.getRawBoneNode(name);
@@ -927,11 +1046,15 @@ void main()`,
     }
 
     const specs = [];
-    for (const [rootName, tipName] of BODY_SEGMENTS) {
+    for (const [rootName, tipName, percentile = 0.9] of segments) {
       const root = node(rootName);
       if (!root) continue;
       const pelvis = tipName === "pelvis";
-      const tip = tipName && !pelvis ? node(tipName) : null;
+      // 先端は、配列で渡されたときは、あるものを先頭から使う
+      const tip = tipName && !pelvis
+        ? [].concat(tipName).map(node).find(Boolean) ?? null
+        : null;
+      if (tipName && !pelvis && !tip) continue; // 先端のボーンが無いモデル
       if (pelvis) {
         const left = node("leftUpperLeg");
         const right = node("rightUpperLeg");
@@ -954,7 +1077,7 @@ void main()`,
       const length = head.distanceTo(tail);
       if (length < 1e-4) continue;
 
-      // 線分への距離の 90% 点を半径にする(押し出された布が肌の下に隠れないよう、やや外側まで)
+      // 線分への距離の 90% 点(既定)を半径にする(押し出された布が肌の下に隠れないよう、やや外側まで)
       const list = points.get(root);
       const axis = tail.clone().sub(head).divideScalar(length);
       const distances = [];
@@ -965,7 +1088,12 @@ void main()`,
       }
       distances.sort((x, y) => x - y);
       const radius = distances.length >= 8
-        ? distances[Math.floor(distances.length * 0.9)]
+        ? distances[
+          Math.min(
+            distances.length - 1,
+            Math.floor(distances.length * percentile),
+          )
+        ]
         : length * 0.2; // 測れなかった部位は、長さの比率で代用する
 
       const worldScale = root.getWorldScale(new THREE.Vector3());
@@ -1036,6 +1164,7 @@ void main()`,
     }
     this._updateForces(manager, null);
     this._applyClothPush(vrm);
+    this._applyHairCollision(vrm, manager);
     if (this._physics.enabled) {
       if (!vrm.springBoneManager) {
         vrm.springBoneManager = manager; // 無効にしていた物理を戻す
