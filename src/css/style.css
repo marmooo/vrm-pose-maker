@@ -184,6 +184,21 @@ body {
   text-overflow: ellipsis;
 }
 
+/* 左右2列の指見出しは幅が狭い。「人差し指」のような長いラベルが「…」で途切れないよう、
+   収まらない時はボタン(ランダム/リセット)をラベルの下の行へ回す */
+.bone-pair .bone-finger-header {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  column-gap: 2px;
+}
+
+.bone-pair .bone-finger-header .bone-header-label {
+  flex: 0 0 auto;
+  max-width: 100%;
+  overflow: visible;
+  text-overflow: clip;
+}
+
 /* 頭グループ内の左目・右目は2列に並べる */
 .bone-eye-pair {
   display: grid;
