@@ -123,6 +123,10 @@ const MTOON_OTHER_PROPS = [
 //   サーフェス側の side (通常 FrontSide) をコピーしてしまうと輪郭が正しく描画されなくなる。
 
 function copyMToonAppearance(src, dst) {
+  // transparent / alphaTest(0かどうか) はシェーダーのdefine(OPAQUE/USE_ALPHATEST)を切り替えるため、
+  // 変わった時だけ再コンパイルが必要。
+  const needsRecompile = dst.transparent !== src.transparent ||
+    (dst.alphaTest > 0) !== (src.alphaTest > 0);
   for (const p of MTOON_COLOR_PROPS) {
     if (src[p] && dst[p]?.copy) dst[p].copy(src[p]);
   }
@@ -135,6 +139,46 @@ function copyMToonAppearance(src, dst) {
   // ここで毎回 needsUpdate=true にすると、頻繁な変更のたびに無駄な再コンパイルが走り、
   // 描画が乱れる/消えるなどの不具合の原因になる。
   dst.uniformsNeedUpdate = true;
+  if (needsRecompile) dst.needsUpdate = true;
+}
+
+/**
+ * opacity を変えた時に、実際に半透明として描画されるよう transparent / alphaTest を整える。
+ * - transparent=false のマテリアルは three.js が OPAQUE を定義し、MToonのシェーダーが
+ *   alpha を 1.0 に固定するため、opacity を下げても見た目が変わらない。
+ * - alphaTest>0 だと alpha < alphaTest で discard されるため、opacity がしきい値を
+ *   下回った瞬間に完全に消える(徐々に透明にならない)。
+ * そこで opacity<1 の間だけ transparent=true / alphaTest=0 にし、1に戻したら元へ戻す。
+ * @returns {boolean} transparent / alphaTest が変わったか
+ */
+function adaptAlphaModeForOpacity(m, opacity) {
+  const ud = m.userData;
+  let changed = false;
+  if (opacity < 1) {
+    if (!m.transparent) {
+      ud.__autoTransparent = true;
+      m.transparent = true;
+      changed = true;
+    }
+    if (m.alphaTest > 0) {
+      ud.__autoAlphaTest = m.alphaTest;
+      m.alphaTest = 0;
+      changed = true;
+    }
+  } else {
+    if (ud.__autoTransparent) {
+      m.transparent = false;
+      changed = true;
+    }
+    if (ud.__autoAlphaTest > 0) {
+      m.alphaTest = ud.__autoAlphaTest;
+      changed = true;
+    }
+    delete ud.__autoTransparent;
+    delete ud.__autoAlphaTest;
+  }
+  if (changed) m.needsUpdate = true;
+  return changed;
 }
 
 function shouldGenerateOutline(m) {
@@ -840,9 +884,28 @@ export class MaterialPanel {
     const resetValue = this._ensureOriginal(first)[field.key];
 
     const onChange = (value) => {
+      if (this._syncingControls) return;
       const rebaseCounts = new Map();
       for (const m of targets) {
         fieldSet(field, m, value);
+        if (field.key === "opacity") {
+          if (adaptAlphaModeForOpacity(m, value)) {
+            // 他フィールドの表示だけを合わせる(setValue は onChange も呼ぶので、その間は無視する)
+            this._syncingControls = true;
+            try {
+              controlsByKey?.get("transparent")?.setValue(m.transparent);
+              controlsByKey?.get("alphaTest")?.setValue(m.alphaTest);
+            } finally {
+              this._syncingControls = false;
+            }
+          }
+        } else if (field.key === "transparent" || field.key === "alphaTest") {
+          // ユーザーが手動で設定した値を、opacity連動の自動復元で上書きしない
+          delete m.userData.__autoTransparent;
+          delete m.userData.__autoAlphaTest;
+          // define(OPAQUE / USE_ALPHATEST)が変わるので再コンパイルが必要
+          m.needsUpdate = true;
+        }
         // 色を変えた場合、表情(Expression)がこのプロパティに対する
         // MaterialColorBindを持っていると、次のvrm.update(delta)で
         // 「読込時点の色」に戻されてしまう。戻り先そのものを今の色に
