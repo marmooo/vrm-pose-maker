@@ -5,6 +5,16 @@ expressions, camera, background) and saving the result. Runs entirely
 client-side (Three.js + `@pixiv/three-vrm`, loaded via CDN `importmap` — no
 build step, no server).
 
+# Screenshots
+
+VRM Space Cat ![VRM Space Cat](screenshots/01.png)
+
+Model Selector ![Model Selector](screenshots/02.png)
+
+Gizmo Control ![Gizmo Control](screenshots/03.png)
+
+Spehere Control ![Sphere Control](screenshots/04.png)
+
 ## Features
 
 - Load one or more VRM models into the same scene. A start-up picker lists the
@@ -14,10 +24,10 @@ build step, no server).
   to the other side.
 - Load a pose or animation from `.glb` / `.fbx` / `.vrma`, pause on a good
   frame, or play random animations from `src/animations/` on loop.
-- `.glb` / `.fbx` files are sorted automatically: a human animation is applied to the
-  selected model, anything else (props, sets, objects with their own motion) is placed in
-  the scene as an object that can be dragged, scaled and rotated. Use "Add object" to
-  force a file to be an object.
+- `.glb` / `.fbx` files are sorted automatically: a human animation is applied
+  to the selected model, anything else (props, sets, objects with their own
+  motion) is placed in the scene as an object that can be dragged, scaled and
+  rotated. Use "Add object" to force a file to be an object.
 - Adjust facial expressions.
 - Edit lights (ambient / directional / point / spot / hemisphere) and every
   MToon / PBR material parameter.
