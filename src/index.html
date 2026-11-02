@@ -68,7 +68,7 @@
     <link rel="modulepreload" href="/vrm-pose-maker/js/gltf-loader.js" />
 
     <!-- Bootstrap 5 -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <link class="drop-inline-css" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet" />
     <!-- Custom CSS -->
     <link href="css/style.css" rel="stylesheet" />
     <script data-ad-client="ca-pub-6459713332128733" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
@@ -771,5 +771,18 @@
     <script type="module" src="/vrm-pose-maker/js/app.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js" defer></script>
+    <!--
+      drop-inline-css は HTML の文字列だけを見て未使用 CSS を削除する。
+      JS(src/js/*.js)や Bootstrap の JS が実行時に付ける Bootstrap のクラスは、
+      ここに列挙しておくこと。JS に Bootstrap のクラスを足したらここにも足す。
+    -->
+    <div class="drop-inline-css d-none
+      active border border-0 border-secondary btn-close-white btn-info
+      d-inline-flex end-0 flex-shrink-1 m-auto my-3 p-3 rounded text-body-emphasis
+      text-end text-nowrap text-start toast toast-body toast-container
+      text-bg-primary text-bg-secondary text-bg-success text-bg-danger
+      text-bg-warning text-bg-info
+      show showing fade collapse collapsing collapsed
+      modal-backdrop modal-static"></div>
   </body>
 </html>
