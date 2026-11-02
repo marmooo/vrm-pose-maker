@@ -43,6 +43,17 @@
 
     <!-- 読み込みの高速化: CDNへ先に接続し、ES Module の依存チェーンを並列に先読みする -->
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+    <!-- importmap は、modulepreload / type="module" より前に置くこと(後だと "three" を解決できず Uncaught TypeError になる) -->
+    <!-- three.js & three-vrm via CDN (ESM importmap) -->
+    <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.min.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/",
+        "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3.5.5/lib/three-vrm.module.min.js"
+      }
+    }
+    </script>
     <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.min.js" />
     <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3.5.5/lib/three-vrm.module.min.js" />
     <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/loaders/GLTFLoader.js" />
@@ -755,16 +766,6 @@
       "scene.001": "未対応のライトの種類です: {0}",
       "vrm.001": "VRM データが見つかりません。有効な VRM ファイルを選択してください。",
       "app.bgFailed": "背景画像・動画の読み込みに失敗しました"
-    }
-    </script>
-    <!-- three.js & three-vrm via CDN (ESM importmap) -->
-    <script type="importmap">
-    {
-      "imports": {
-        "three": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.min.js",
-        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/",
-        "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3.5.5/lib/three-vrm.module.min.js"
-      }
     }
     </script>
 
