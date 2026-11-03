@@ -76,6 +76,8 @@ const HAIR_SURFACE_BONES = [
 // 髪の突き抜け軽減のスライダーを 1 から 1 動かしたときの、表面からの距離の変化(m)
 const HAIR_MARGIN_PER_UNIT = 0.02;
 // 毛束の縁の頂点を、表面から離しておく距離(m)。スライダーが 1 のとき(服の表面と髪がちょうど接しないように、わずかに)
+// 髪が表面に触れているときの摩擦係数(壁に沿った動きを、壁に押し付ける動きのこの倍だけ減らす)。
+const HAIR_FRICTION = 0.5;
 const HAIR_SURFACE_GAP = 0.002;
 const CLOTH_PUSH_MAX = 9; // シェーダーで扱うカプセルの数(BODY_SEGMENTS 以上)
 // スカートのボーンへの重みが、この値を超えた頂点から押し出しを始める(シェーダーの smoothstep の始点と同じ)
@@ -795,6 +797,83 @@ export class SceneManager {
     this._syncHairCollision(vrm);
   }
 
+  /**
+   * 髪が表面に触れているときの動きを落ち着かせる(hairCollision が 0 のとき、entry.active が false のときは何もしない)。
+   * 当たり判定は「めり込んだ点を法線方向に押し出す」ので、谷間や尾根など法線が急に変わる所では、押し出した先がまた別の壁の
+   * 中になり、3 フレーム周期などで押し出しと落下を繰り返して震え続けることがある。そこで、触れているときは、
+   * 1. 前のフレームの位置(当たり判定を通った後なので、表面の外)から、今回の動きのうち壁に沿った成分だけ
+   *    (摩擦で減らして)進め、表面の外に出ている範囲でいちばん遠くまで進む(外 → 外の移動なので、押し出しの行き過ぎが無い)。
+   * 2. 押し出した距離を速度に残さない(three-vrm は押し出し後の位置を「今の位置」にするので、残すと壁から離れ、
+   *    戻ってきてまた押し出される)。
+   * 前の位置がすでに表面の中のとき(体が動いたなど)は、従来どおり押し出した位置を使う。
+   */
+  _dampHairCollision(entry, joint) {
+    const collide = joint._collision;
+    const update = joint.update;
+    if (typeof collide !== "function" || typeof update !== "function") return;
+    const pre = new THREE.Vector3();
+    const prev = new THREE.Vector3();
+    const old = new THREE.Vector3();
+    const step = new THREE.Vector3();
+    const normal = new THREE.Vector3();
+    const tangent = new THREE.Vector3();
+    const head = new THREE.Vector3();
+    const probe = new THREE.Vector3();
+    const candidate = new THREE.Vector3();
+    let moved = false;
+    const outside = (self, point) => {
+      probe.copy(point);
+      collide.call(self, probe);
+      return probe.distanceToSquared(point) < 1e-10;
+    };
+    joint._collision = function (tail) {
+      moved = false;
+      pre.copy(tail);
+      collide.call(this, tail);
+      if (!entry.active || pre.distanceToSquared(tail) <= 1e-14) return;
+      moved = true;
+      prev.copy(old).applyMatrix4(this._getMatrixCenterToWorld());
+      if (!outside(this, prev)) return;
+      normal.subVectors(tail, pre).normalize(); // 押し出す向き(外向きの法線)
+      step.subVectors(pre, prev);
+      const into = step.dot(normal);
+      if (into >= 0) return;
+      tangent.copy(step).addScaledVector(normal, -into);
+      const slide = tangent.length();
+      const keep = slide > 1e-12
+        ? Math.max(0, 1 - HAIR_FRICTION * -into / slide)
+        : 0;
+      if (keep <= 0) {
+        tail.copy(prev); // 摩擦で止まる(壁に押し付ける動きのほうが大きい): 前の位置のまま
+        return;
+      }
+      tangent.multiplyScalar(keep);
+      const e = this.bone.matrixWorld.elements;
+      head.set(e[12], e[13], e[14]);
+      const reach = (amount) =>
+        candidate.copy(prev).addScaledVector(tangent, amount).sub(head)
+          .normalize().multiplyScalar(this._worldSpaceBoneLength).add(head);
+      if (outside(this, reach(1))) {
+        tail.copy(candidate);
+        return;
+      }
+      let low = 0;
+      let high = 1;
+      for (let k = 0; k < 4; k++) {
+        const mid = (low + high) / 2;
+        if (outside(this, reach(mid))) low = mid;
+        else high = mid;
+      }
+      tail.copy(reach(low));
+    };
+    joint.update = function (delta) {
+      moved = false;
+      old.copy(this._currentTail);
+      update.call(this, delta);
+      if (moved) this._prevTail.copy(this._currentTail);
+    };
+  }
+
   _prepareHairCollision(vrm, manager) {
     const entry = {
       specs: [],
@@ -818,6 +897,7 @@ export class SceneManager {
       if (joint.child) hairBones.add(joint.child);
     }
     if (!entry.joints.length) return entry; // 髪の揺れ物が無いモデル
+    for (const joint of entry.joints) this._dampHairCollision(entry, joint);
 
     // 初期姿勢(Tポーズ)で、肌と服の表面そのものを当たり判定にする(カプセルだと、胸の楕円や肩幅、先細りの腕に合わせて
     // 半径を決められず、髪が浮くか突き抜ける)。作れなかったときだけ、服込みで測ったカプセルにする。
