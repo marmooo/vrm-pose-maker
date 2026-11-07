@@ -978,6 +978,46 @@ export function measureStrandSamples(vrm, joints) {
  * 押し出し量を決め打ちの係数で推定すると、行き過ぎた分が(three-vrm は位置の変化を次のフレームの速度にするので)外向きの速度として残り、
  * 浮いては沈む往復で髪が震える。今のボーンの向きのまま調べると、押し出すたびに数 mm ずれて、これも震えの元になる。
  */
+/**
+ * たくさんの球をまとめて 1 つの当たり判定にする。先端から遠い球は、距離の二乗だけ見て外すので、球が多くても軽い。
+ * 球の colliderMatrix は、使う前に呼び出し側が更新しておくこと(球は、揺れ物のジョイントの当たり判定の組に入れない)。
+ */
+export class SphereCloudShape {
+  /** @param {{ shape: object, colliderMatrix: THREE.Matrix4 }[]} spheres 半径(shape.radius)を持つ球のコライダー */
+  constructor(spheres) {
+    this.spheres = spheres;
+    this._normal = new THREE.Vector3();
+  }
+
+  get type() {
+    return "sphere-cloud";
+  }
+
+  calculateCollision(_colliderMatrix, tail, objectRadius, target) {
+    let deepest = 0;
+    const n = this._normal;
+    for (const c of this.spheres) {
+      const m = c.colliderMatrix.elements;
+      const dx = m[12] - tail.x;
+      const dy = m[13] - tail.y;
+      const dz = m[14] - tail.z;
+      const limit = c.shape.radius + objectRadius;
+      if (dx * dx + dy * dy + dz * dz >= limit * limit) continue;
+      const d = c.shape.calculateCollision(
+        c.colliderMatrix,
+        tail,
+        objectRadius,
+        n,
+      );
+      if (d < deepest) {
+        deepest = d;
+        target.copy(n);
+      }
+    }
+    return deepest < 0 ? deepest : 1;
+  }
+}
+
 export class StrandCollisionShape {
   /**
    * @param {{ shape: SurfaceColliderShape, colliderMatrix: THREE.Matrix4 }[]} carriers 表面の当たり判定(ボーンに付けたコライダー)

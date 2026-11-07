@@ -334,13 +334,15 @@ class App {
         this._syncPhysicsUi();
       },
     );
-    document.getElementById("physics-hair-fit")?.addEventListener(
-      "change",
-      (e) => {
-        this._scene.setPhysics({ hairFit: e.target.checked });
-        this._syncPhysicsUi();
-      },
-    );
+    for (const part of ["hair", "skirt", "other"]) {
+      document.getElementById(`physics-strict-${part}`)?.addEventListener(
+        "change",
+        (e) => {
+          this._scene.setPhysics({ strict: { [part]: e.target.checked } });
+          this._syncPhysicsUi();
+        },
+      );
+    }
     document.getElementById("btn-settle-physics")?.addEventListener(
       "click",
       () => this._scene.settlePhysics(),
@@ -820,14 +822,16 @@ class App {
 
   /** 物理の設定(ON/OFF・重力)を画面の入力欄に反映する。 */
   _syncPhysicsUi() {
-    const { enabled, gravity, wind, gust, collision, hairCollision, hairFit } =
+    const { enabled, gravity, wind, gust, collision, hairCollision, strict } =
       this
         ._scene
         .getPhysics();
     const toggle = document.getElementById("toggle-physics");
     if (toggle) toggle.checked = enabled;
-    const fit = document.getElementById("physics-hair-fit");
-    if (fit) fit.checked = hairFit ?? false;
+    for (const part of ["hair", "skirt", "other"]) {
+      const check = document.getElementById(`physics-strict-${part}`);
+      if (check) check.checked = strict?.[part] ?? false;
+    }
     const set = (id, value, digits) => {
       const slider = document.getElementById(id);
       const output = document.getElementById(`${id}-value`);
@@ -853,7 +857,8 @@ class App {
       gust: physics.gust,
       collision: physics.collision,
       hairCollision: physics.hairCollision,
-      hairFit: physics.hairFit,
+      strict: physics.strict,
+      hairFit: physics.hairFit, // 古いプロジェクトの名前
     });
     this._syncPhysicsUi();
   }
