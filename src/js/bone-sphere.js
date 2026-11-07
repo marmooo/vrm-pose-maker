@@ -1,7 +1,9 @@
 /**
  * bone-sphere.js - ボーン操作UI（球 / ギズモ）の表示と操作
  *
- * 可動域制限は行わない。UIはボーン操作のためのものとして機能するのみ。
+ * 可動域による操作の制限は行わない。ただし「球」方式では、設定で有効にすると
+ * 可動域の外になる向き（本来動かせない向き）を球の上に赤く表示できる
+ * （setShowLimits。data/bone-limits.json を使う。既定はオン）。
  *
  * 操作方式（manipMode）:
  *   'sphere' : 半透明の球をドラッグして自由な方向へ向ける（デフォルト）。
@@ -27,6 +29,7 @@
  *   球面/リングのドラッグ（回転/移動操作）とは別の当たり判定なので競合しない。
  */
 import * as THREE from "three";
+import { getBoneLimit, loadBoneLimits } from "./bone-limits.js";
 import {
   CHILD_MAP,
   findAnyChildBoneName,
@@ -126,6 +129,17 @@ export class BoneSphere {
 
     this._raycaster = new THREE.Raycaster();
     this._modelHeight = 1.6;
+
+    // 可動域外を赤く表示するか（既定オン。UIのスイッチで切り替える）
+    this._showLimits = true;
+    this._limitMesh = null;
+    // 可動域テーブルは非同期で読むので、読み終わったら今の球を作り直す
+    loadBoneLimits().then(() => {
+      if (this._showLimits && this._boneNode) {
+        this._buildMeshes();
+        this._updatePosition();
+      }
+    }).catch(() => {});
   }
 
   setVrm(vrm) {
@@ -172,6 +186,7 @@ export class BoneSphere {
     this._dotHitMesh = null;
     this._ringMeshes = null;
     this._ringHitMeshes = null;
+    this._limitMesh = null;
     this._boneName = null;
     this._boneNode = null;
     this._dragging = false;
@@ -202,6 +217,16 @@ export class BoneSphere {
 
   getManipulationMode() {
     return this._manipMode;
+  }
+
+  /** 可動域の外（動かせない向き）を球の上に赤く表示する。 */
+  async setShowLimits(show) {
+    this._showLimits = !!show;
+    if (this._showLimits) await loadBoneLimits();
+    if (this._boneNode) {
+      this._buildMeshes();
+      this._updatePosition();
+    }
   }
 
   /**
@@ -474,6 +499,7 @@ export class BoneSphere {
     this._wireMesh = null;
     this._ringMeshes = null;
     this._ringHitMeshes = null;
+    this._limitMesh = null;
 
     if (this._manipMode === "gizmo") {
       this._buildGizmoRings();
@@ -501,6 +527,7 @@ export class BoneSphere {
       });
       this._wireMesh = new THREE.Mesh(wireGeo, wireMat);
       this._group.add(this._wireMesh);
+      this._buildLimitMesh(r);
     }
 
     // 中心マーカー（操作対象トグル用。モード共通・見た目）
@@ -575,6 +602,9 @@ export class BoneSphere {
       );
     }
 
+    // 可動域は「自分自身」を回すときの話なので、親ボーン操作中は隠す
+    if (this._limitMesh) this._limitMesh.visible = !isParentMode;
+
     if (this._manipMode === "gizmo") {
       if (!this._ringMeshes) return;
       for (const spec of GIZMO_AXES) {
@@ -632,6 +662,104 @@ export class BoneSphere {
     } else {
       this._group.position.copy(wp);
     }
+
+    // 可動域メッシュは親ボーン基準の向きで作ってあるので、親の回転に追従させる
+    if (this._limitMesh) {
+      const parent = this._boneNode.parent;
+      if (parent) parent.getWorldQuaternion(this._limitMesh.quaternion);
+      else this._limitMesh.quaternion.identity();
+    }
+  }
+
+  /**
+   * 可動域の内側の姿勢をまんべんなく作り、そのときボーンが向く方向を球の上に
+   * 記録して、どの姿勢でも届かない方向だけを赤くした半透明の球を重ねる。
+   *
+   * 球をドラッグしても決まるのは先端の向きだけで、ひねり（長軸まわり）は
+   * 操作では決まらない。そのため「ひねりを含めどれか1つでも可動域に収まる姿勢が
+   * あれば動かせる」とみなす（可動域の3軸を全部ふって調べる）。
+   * 向きはボーンの親から見たローカル方向で求める（メッシュ側で親の回転を掛ける）。
+   * ひじ・ひざのように動かせる向きが細い帯になる場合も、帯が抜け落ちないよう
+   * 「姿勢→向き」の方向で調べている。
+   */
+  _buildLimitMesh(r) {
+    if (!this._showLimits || this._mode === "eye") return;
+    const limit = getBoneLimit(this._boneName);
+    if (!limit) return;
+
+    const rest = this._getRestChildDir(this._boneName);
+    const flip = this._vrm?.meta?.metaVersion === "0" ? -1 : 1;
+    const W = 48, H = 32; // 球の分割数
+    const geo = new THREE.SphereGeometry(r * 1.003, W, H);
+    const pos = geo.attributes.position;
+    const reach = new Uint8Array(pos.count);
+    const dirs = [];
+    for (let i = 0; i < pos.count; i++) {
+      dirs.push(new THREE.Vector3().fromBufferAttribute(pos, i).normalize());
+    }
+
+    // 各軸を約4度刻み（最大 MAX_STEPS 分割）で、範囲の両端を含めてふる
+    const MAX_STEPS = 40;
+    const STEP = (4 * Math.PI) / 180;
+    const steps = ([lo, hi]) =>
+      Math.max(1, Math.min(MAX_STEPS, Math.ceil((hi - lo) / STEP)));
+    const at = (
+      [lo, hi],
+      k,
+      n,
+    ) => (n === 0 ? (lo + hi) / 2 : lo + ((hi - lo) * k) / n);
+    const nx = steps(limit.x), ny = steps(limit.y), nz = steps(limit.z);
+    const COS_NEAR = Math.cos((5 * Math.PI) / 180); // この近さの頂点を「届く」とする
+    const e = new THREE.Euler();
+    const q = new THREE.Quaternion();
+    const d = new THREE.Vector3();
+
+    for (let a = 0; a <= nx; a++) {
+      for (let b = 0; b <= ny; b++) {
+        for (let c = 0; c <= nz; c++) {
+          e.set(
+            at(limit.x, a, nx) * flip,
+            at(limit.y, b, ny),
+            at(limit.z, c, nz) * flip,
+            limit.order,
+          );
+          d.copy(rest).applyQuaternion(q.setFromEuler(e));
+          // SphereGeometry の頂点番号 = iy*(W+1)+ix（x=-cosφ·sinθ, y=cosθ, z=sinφ·sinθ）
+          const theta = Math.acos(Math.max(-1, Math.min(1, d.y)));
+          const phi = Math.atan2(d.z, -d.x);
+          const iy0 = Math.round((theta / Math.PI) * H);
+          const ix0 = Math.round((((phi / (2 * Math.PI)) % 1 + 1) % 1) * W);
+          for (let dy = -1; dy <= 1; dy++) {
+            const iy = iy0 + dy;
+            if (iy < 0 || iy > H) continue;
+            for (let dx = -1; dx <= 1; dx++) {
+              const ix = (((ix0 + dx) % W) + W) % W;
+              for (const x of ix === 0 ? [0, W] : [ix]) {
+                const v = iy * (W + 1) + x;
+                if (!reach[v] && dirs[v].dot(d) > COS_NEAR) reach[v] = 1;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 赤(不可)は頂点アルファで境界をなめらかにぼかす
+    const colors = new Float32Array(pos.count * 4);
+    for (let i = 0; i < pos.count; i++) {
+      colors.set([1, 0.1, 0.1, reach[i] ? 0 : 0.45], i * 4);
+    }
+    geo.setAttribute("color", new THREE.BufferAttribute(colors, 4));
+
+    const mat = new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    this._limitMesh = new THREE.Mesh(geo, mat);
+    this._limitMesh.renderOrder = 2;
+    this._group.add(this._limitMesh);
   }
 
   // =========================================================

@@ -398,6 +398,12 @@ class App {
       }
     });
 
+    // 可動域の外を赤く表示（既定オフ）
+    const showLimits = document.getElementById("bone-show-limits");
+    showLimits?.addEventListener("change", () => {
+      this._boneSphere.setShowLimits(showLimits.checked);
+    });
+
     // VRM 読込
     this._btnLoadVrm.addEventListener("click", () => this._openVrmSource());
     document.getElementById("btn-model-add")?.addEventListener(
