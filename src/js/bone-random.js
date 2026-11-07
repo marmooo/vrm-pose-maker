@@ -75,13 +75,13 @@ export async function randomizeBones(
   /** 1つのボーンの回転(オイラー角, ラジアン)を、可動域の範囲内で引く */
   const draw = (name, limit) => {
     const v = {
-      x: triangular(...limit.x, rng),
-      y: triangular(...limit.y, rng),
-      z: triangular(...limit.z, rng),
+      x: triangular(...limit.random.x, rng),
+      y: triangular(...limit.random.y, rng),
+      z: triangular(...limit.random.z, rng),
     };
     if (limit.curl && FINGER_RE.test(name)) {
       const t = curlOf(name);
-      const [lo, hi] = limit[limit.curl];
+      const [lo, hi] = limit.random[limit.curl];
       const extreme = Math.abs(lo) > Math.abs(hi) ? lo : hi; // 曲げる側の端
       v[limit.curl] = extreme * t;
       // 握るほど指は開きにくい

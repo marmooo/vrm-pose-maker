@@ -6,6 +6,7 @@
   "eulerOrder": "Each bone has an 'order' (three.js Euler order, R = product left-to-right e.g. ZYX = Rz*Ry*Rx). The order is chosen so that the LAST letter is the bone's long axis (twist), applied first, and the singular middle axis is rarely reached. Build the rotation with new THREE.Euler(x, y, z, order) using the x/y/z ranges below. Do not decompose with a different order and compare against the ranges.",
   "mirror": "Only left-side and center bones are listed. A right bone is the left bone mirrored across the YZ plane: same order, x range unchanged, y and z ranges become [-max, -min]. (Quaternion form: (qx,-qy,-qz,qw).)",
   "flags": {
+    "randomRange": "optional per-axis [min,max] used only for random pose generation; defaults to range. Lets range cover what a flexible person can do while random poses stay moderate",
     "randomize": "false = never randomized; \"explicit\" = skipped by group/whole-body randomization, randomized only when the caller asks for that bone explicitly (eyes: both eyes then share one gaze direction); default true",
     "curl": "axis ('z') whose value represents finger curl; random generation shares one curl factor per finger so joints bend together"
   },
@@ -324,6 +325,10 @@
       },
       "z": {
         "range": [
+          -30,
+          90
+        ],
+        "randomRange": [
           -30,
           45
         ],
