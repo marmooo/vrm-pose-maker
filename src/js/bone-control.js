@@ -39,6 +39,9 @@ import {
   SELECTABLE_BONE_NAMES,
 } from "./bone-hierarchy.js";
 
+// ギズモのリングを含む平面をポインタの光線との交点で追う('plane')か、接線方向の移動量で追う('tangent')かの境目。
+// 回転軸とカメラ方向の内積(の絶対値)がこれ以上なら plane。小さいほどリングを真横から見ている。
+const GIZMO_PLANE_MIN_FACING = 0.3;
 // 右クリックが「ドラッグ」と判定するしきい値（px）
 const DRAG_THRESHOLD = 5;
 // 長押し判定時間（ms）
@@ -95,8 +98,7 @@ export class BoneController {
 
     // ギズモドラッグ用の状態
     this._gizmoAxisKey = null;
-    this._gizmoLastAngle = 0;
-    this._gizmoFacingSign = 1;
+    this._gizmoDrag = null; // _beginGizmoDrag 参照
 
     this._raycaster = new THREE.Raycaster();
     this._pointer = new THREE.Vector2();
@@ -232,8 +234,7 @@ export class BoneController {
           if (axis) {
             this._boneSphere.beginGizmoRotate(axis);
             this._gizmoAxisKey = axis;
-            this._gizmoFacingSign = this._computeGizmoFacingSign(axis);
-            this._gizmoLastAngle = this._gizmoScreenAngle(e.clientX, e.clientY);
+            this._beginGizmoDrag(axis, e.clientX, e.clientY);
             this._trackingMode = "gizmo-rotate";
             this._scene.controls.enabled = false;
             this._canvas.classList.add("dragging-bone");
@@ -383,12 +384,9 @@ export class BoneController {
       const ndc = this._getPointerNDC(e.clientX, e.clientY);
       this._boneSphere?.handleClick(ndc, this._scene.camera);
     } else if (this._trackingMode === "gizmo-rotate") {
-      const angle = this._gizmoScreenAngle(e.clientX, e.clientY);
-      let delta = angle - this._gizmoLastAngle;
-      if (delta > Math.PI) delta -= Math.PI * 2;
-      if (delta < -Math.PI) delta += Math.PI * 2;
-      this._boneSphere?.applyGizmoRotationDelta(delta * this._gizmoFacingSign);
-      this._gizmoLastAngle = angle;
+      this._boneSphere?.applyGizmoRotationDelta(
+        this._gizmoDragDelta(e.clientX, e.clientY),
+      );
     } else if (this._trackingMode === "right-pending") {
       // 右ボタン: 動いたらドラッグ（位置移動）に確定
       const dx = e.clientX - this._rightDownPos.x;
@@ -512,8 +510,7 @@ export class BoneController {
 
             this._boneSphere.beginGizmoRotate(axis);
             this._gizmoAxisKey = axis;
-            this._gizmoFacingSign = this._computeGizmoFacingSign(axis);
-            this._gizmoLastAngle = this._gizmoScreenAngle(t.clientX, t.clientY);
+            this._beginGizmoDrag(axis, t.clientX, t.clientY);
             this._trackingMode = "gizmo-rotate";
             this._scene.controls.enabled = false;
             this._canvas.classList.add("dragging-bone");
@@ -694,12 +691,9 @@ export class BoneController {
       this._trackingMode === "gizmo-rotate" && e.touches.length === 1
     ) {
       const t = e.touches[0];
-      const angle = this._gizmoScreenAngle(t.clientX, t.clientY);
-      let delta = angle - this._gizmoLastAngle;
-      if (delta > Math.PI) delta -= Math.PI * 2;
-      if (delta < -Math.PI) delta += Math.PI * 2;
-      this._boneSphere?.applyGizmoRotationDelta(delta * this._gizmoFacingSign);
-      this._gizmoLastAngle = angle;
+      this._boneSphere?.applyGizmoRotationDelta(
+        this._gizmoDragDelta(t.clientX, t.clientY),
+      );
       this._lastClientX = t.clientX;
       this._lastClientY = t.clientY;
     } else if (this._trackingMode === "translate" && e.touches.length >= 2) {
@@ -785,34 +779,133 @@ export class BoneController {
   }
 
   /**
-   * ギズモドラッグ用: 選択中ボーンのスクリーン座標を中心とした、
-   * マウス位置の角度（ラジアン）を返す。
+   * ギズモのドラッグ開始。掴んだリング(回転軸 a のまわりの円)の上での動きを、
+   * その軸まわりの回転角(右ねじの向きが正)に直すための準備をする。
+   *
+   * 'plane'  : リングがある程度こちらを向いているとき。カメラからポインタへの光線が
+   *            リングを含む平面と交わる点の、中心まわりの角度の変化をそのまま回転角にする
+   *            (一般的なギズモと同じ。マウスがリングの上を一周すれば、ちょうど一回転する)。
+   * 'tangent': リングをほぼ真横から見ているとき。平面との交点が不安定になるので、
+   *            掴んだ点でのリングの接線方向への画面上の移動量から回転角を求める。
+   * どちらも回転軸の向きは変わらない(親ボーンの座標系の軸)ので、カメラの向きによる
+   * 符号の反転は要らない。
    */
-  _gizmoScreenAngle(clientX, clientY) {
-    if (!this._selectedBoneNode) return 0;
-    const originWorld = new THREE.Vector3();
-    this._selectedBoneNode.getWorldPosition(originWorld);
-    const projected = originWorld.clone().project(this._scene.camera);
-    const rect = this._canvas.getBoundingClientRect();
-    const originX = (projected.x * 0.5 + 0.5) * rect.width + rect.left;
-    const originY = (-projected.y * 0.5 + 0.5) * rect.height + rect.top;
-    return Math.atan2(clientY - originY, clientX - originX);
+  _beginGizmoDrag(axisKey, clientX, clientY) {
+    this._gizmoDrag = null;
+    if (!this._boneSphere || !this._selectedBoneNode) return;
+    const a = this._boneSphere.getGizmoWorldAxis(axisKey);
+    const origin = new THREE.Vector3();
+    this._selectedBoneNode.getWorldPosition(origin);
+    const helper = Math.abs(a.y) < 0.9
+      ? new THREE.Vector3(0, 1, 0)
+      : new THREE.Vector3(1, 0, 0);
+    const u = new THREE.Vector3().crossVectors(helper, a).normalize();
+    const v = new THREE.Vector3().crossVectors(a, u); // u → v が a まわりの正の向き
+    const drag = {
+      a,
+      origin,
+      u,
+      v,
+      radius: this._boneSphere.getRadius(),
+      mode: "tangent",
+      angle: 0, // plane: 直前の角度 / tangent: 掴んでいるリング上の位置
+      x: clientX,
+      y: clientY,
+    };
+    const toView = new THREE.Vector3()
+      .subVectors(this._scene.camera.position, origin).normalize();
+    if (Math.abs(a.dot(toView)) >= GIZMO_PLANE_MIN_FACING) {
+      const hit = this._gizmoPlanePoint(drag, clientX, clientY);
+      if (hit) {
+        drag.mode = "plane";
+        drag.angle = this._gizmoPlaneAngle(drag, hit);
+      }
+    }
+    if (drag.mode === "tangent") {
+      // ポインタに一番近いリング上の点を、掴んだ位置とする
+      let best = Infinity;
+      for (let i = 0; i < 72; i++) {
+        const th = (i / 72) * Math.PI * 2;
+        const p = this._gizmoScreenPoint(this._gizmoRingPoint(drag, th));
+        const d = Math.hypot(p.x - clientX, p.y - clientY);
+        if (d < best) {
+          best = d;
+          drag.angle = th;
+        }
+      }
+    }
+    this._gizmoDrag = drag;
   }
 
-  /**
-   * リングがカメラ側を向いているか奥を向いているかで、画面上の
-   * ドラッグ角度と実際の回転方向の対応が逆になる。ドラッグ開始時に
-   * 一度だけ判定する（ドラッグ中はカメラ操作を無効化しているため
-   * カメラは動かない＝毎フレーム再計算する必要はない）。
-   */
-  _computeGizmoFacingSign(axisKey) {
-    if (!this._boneSphere || !this._selectedBoneNode) return 1;
-    const worldAxis = this._boneSphere.getGizmoWorldAxis(axisKey);
-    const originWorld = new THREE.Vector3();
-    this._selectedBoneNode.getWorldPosition(originWorld);
-    const camToOrigin = new THREE.Vector3()
-      .subVectors(this._scene.camera.position, originWorld).normalize();
-    return worldAxis.dot(camToOrigin) >= 0 ? 1 : -1;
+  /** 前回の呼び出しから増えた分の回転角(ラジアン)を返す。 */
+  _gizmoDragDelta(clientX, clientY) {
+    const drag = this._gizmoDrag;
+    if (!drag) return 0;
+    let delta = 0;
+    if (drag.mode === "plane") {
+      const hit = this._gizmoPlanePoint(drag, clientX, clientY);
+      if (hit) {
+        const angle = this._gizmoPlaneAngle(drag, hit);
+        delta = angle - drag.angle;
+        if (delta > Math.PI) delta -= Math.PI * 2;
+        if (delta < -Math.PI) delta += Math.PI * 2;
+        drag.angle = angle;
+      }
+    } else {
+      // 掴んだ点での接線(画面上)と、1ラジアンあたりの画面上の移動量
+      const p0 = this._gizmoScreenPoint(this._gizmoRingPoint(drag, drag.angle));
+      const eps = 0.01;
+      const p1 = this._gizmoScreenPoint(
+        this._gizmoRingPoint(drag, drag.angle + eps),
+      );
+      const tx = (p1.x - p0.x) / eps;
+      const ty = (p1.y - p0.y) / eps;
+      const len2 = tx * tx + ty * ty;
+      if (len2 > 1e-6) {
+        delta = ((clientX - drag.x) * tx + (clientY - drag.y) * ty) / len2;
+        drag.angle += delta;
+      }
+    }
+    drag.x = clientX;
+    drag.y = clientY;
+    return delta;
+  }
+
+  _gizmoRingPoint(drag, theta) {
+    return drag.origin.clone()
+      .addScaledVector(drag.u, Math.cos(theta) * drag.radius)
+      .addScaledVector(drag.v, Math.sin(theta) * drag.radius);
+  }
+
+  /** ワールド座標の点 → 画面(クライアント)座標 */
+  _gizmoScreenPoint(world) {
+    const ndc = world.clone().project(this._scene.camera);
+    const rect = this._canvas.getBoundingClientRect();
+    return {
+      x: (ndc.x * 0.5 + 0.5) * rect.width + rect.left,
+      y: (-ndc.y * 0.5 + 0.5) * rect.height + rect.top,
+    };
+  }
+
+  /** ポインタの光線と、リングを含む平面との交点(平行などで交わらなければ null) */
+  _gizmoPlanePoint(drag, clientX, clientY) {
+    const rect = this._canvas.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, this._scene.camera);
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(
+      drag.a,
+      drag.origin,
+    );
+    return ray.ray.intersectPlane(plane, new THREE.Vector3());
+  }
+
+  _gizmoPlaneAngle(drag, point) {
+    const w = point.clone().sub(drag.origin);
+    return Math.atan2(w.dot(drag.v), w.dot(drag.u));
   }
 
   // =========================================================

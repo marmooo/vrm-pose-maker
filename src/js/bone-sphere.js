@@ -133,6 +133,7 @@ export class BoneSphere {
     // 可動域外を赤く表示するか（既定オン。UIのスイッチで切り替える）
     this._showLimits = true;
     this._limitMesh = null;
+    this._gizmoGroup = null; // リングをまとめる。回転軸と同じ座標系に向ける（_updateGizmoOrientation）
     // 可動域テーブルは非同期で読むので、読み終わったら今の球を作り直す
     loadBoneLimits().then(() => {
       if (this._showLimits && this._boneNode) {
@@ -186,6 +187,7 @@ export class BoneSphere {
     this._dotHitMesh = null;
     this._ringMeshes = null;
     this._ringHitMeshes = null;
+    this._gizmoGroup = null;
     this._limitMesh = null;
     this._boneName = null;
     this._boneNode = null;
@@ -213,6 +215,11 @@ export class BoneSphere {
       this._buildMeshes();
       this._updatePosition();
     }
+  }
+
+  /** 球・ギズモリングの半径（ワールド単位） */
+  getRadius() {
+    return this._radius;
   }
 
   getManipulationMode() {
@@ -565,6 +572,8 @@ export class BoneSphere {
 
     this._ringMeshes = {};
     this._ringHitMeshes = {};
+    this._gizmoGroup = new THREE.Group();
+    this._group.add(this._gizmoGroup);
 
     for (const spec of GIZMO_AXES) {
       const geo = new THREE.TorusGeometry(r, tube, 8, 48);
@@ -577,14 +586,14 @@ export class BoneSphere {
       const mesh = new THREE.Mesh(geo, mat);
       mesh.renderOrder = 998;
       spec.apply(mesh);
-      this._group.add(mesh);
+      this._gizmoGroup.add(mesh);
       this._ringMeshes[spec.key] = mesh;
 
       const hitGeo = new THREE.TorusGeometry(r, hitTube, 6, 24);
       const hitMat = new THREE.MeshBasicMaterial({ visible: false });
       const hitMesh = new THREE.Mesh(hitGeo, hitMat);
       spec.apply(hitMesh);
-      this._group.add(hitMesh);
+      this._gizmoGroup.add(hitMesh);
       this._ringHitMeshes[spec.key] = hitMesh;
     }
   }
@@ -607,6 +616,7 @@ export class BoneSphere {
 
     if (this._manipMode === "gizmo") {
       if (!this._ringMeshes) return;
+      this._updateGizmoOrientation();
       for (const spec of GIZMO_AXES) {
         const mesh = this._ringMeshes[spec.key];
         if (!mesh) continue;
@@ -663,12 +673,32 @@ export class BoneSphere {
       this._group.position.copy(wp);
     }
 
+    this._updateGizmoOrientation();
+
     // 可動域メッシュは親ボーン基準の向きで作ってあるので、親の回転に追従させる
     if (this._limitMesh) {
       const parent = this._boneNode.parent;
       if (parent) parent.getWorldQuaternion(this._limitMesh.quaternion);
       else this._limitMesh.quaternion.identity();
     }
+  }
+
+  /**
+   * リングの向きを、実際に回す軸（applyGizmoRotationDelta / getGizmoWorldAxis と同じ
+   * 「操作対象ボーンの親」のワールド回転）に合わせる。親が回っていても、
+   * 見えているリングと実際に回る軸が一致する。
+   */
+  _updateGizmoOrientation() {
+    if (!this._gizmoGroup || !this._boneNode) return;
+    const refNode = (this._targetMode === "parent" && this._boneNode.parent)
+      ? this._boneNode.parent
+      : this._boneNode;
+    if (refNode.parent) {
+      refNode.parent.getWorldQuaternion(this._gizmoGroup.quaternion);
+    } else {
+      this._gizmoGroup.quaternion.identity();
+    }
+    this._gizmoGroup.updateMatrixWorld(true);
   }
 
   /**
