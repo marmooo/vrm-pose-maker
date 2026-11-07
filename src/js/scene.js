@@ -5,12 +5,15 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import {
   buildSurfaceShapes,
+  buildWorldSurface,
+  isSpringMesh,
   measureStrandSamples,
   StrandCollisionShape,
 } from "./surface-collider.js";
 import {
   VRMSpringBoneCollider,
   VRMSpringBoneColliderShapeCapsule,
+  VRMSpringBoneColliderShapeSphere,
 } from "@pixiv/three-vrm";
 
 import { tr } from "./i18n.js";
@@ -57,6 +60,37 @@ const HAIR_SEGMENTS = [
 ];
 // 最も近い(親をたどって最初に出会う)ヒューマノイドのボーンがこれなら、髪の揺れ物とみなす
 const HAIR_ROOTS = ["head", "neck"];
+// モデルが元から持つ体の当たり判定(首・胸・腕の球)は、服(袖や肩の膨らみ)より小さいことが多い。
+// 髪の揺れ物にだけ、肩・腕・胸の服の表面に沿って小さな球を敷き詰め、毛束の縁の点もその球で判定する。
+// (1 つの大きな球で服に届かせる方法は、服の無い空中にも判定が広がり、体の前に垂れる髪を前へ押し出してしまう)
+const HAIR_FIT_RADIUS = 0.025; // 敷き詰める球の半径(m)
+const HAIR_FIT_MIN_RADIUS = 0.01; // 球を小さくしていく下限(これより小さくなる所には置かない)
+const HAIR_FIT_CELL = 0.02;
+const HAIR_FIT_MAX_PROTRUSION = 0.0025; // 球の面が、服の表面から外へ出てよい量(m)。超える球は小さくするか捨てる(2 mm の隙間を含む)
+// 球の面を調べる 26 方向
+const PROBE_DIRECTIONS = [];
+for (let i = -1; i <= 1; i++) {
+  for (let j = -1; j <= 1; j++) {
+    for (let k = -1; k <= 1; k++) {
+      if (i || j || k) {
+        PROBE_DIRECTIONS.push(new THREE.Vector3(i, j, k).normalize());
+      }
+    }
+  }
+} // 球の中心の間隔(m)
+const HAIR_FIT_MAX_SPHERES = 600;
+// 球を敷く骨と、その骨の向き(先の骨)
+const HAIR_FIT_BONES = [
+  ["neck", "head"],
+  ["upperChest", "neck"],
+  ["chest", "upperChest"],
+  ["leftShoulder", "leftUpperArm"],
+  ["rightShoulder", "rightUpperArm"],
+  ["leftUpperArm", "leftLowerArm"],
+  ["rightUpperArm", "rightLowerArm"],
+  ["leftLowerArm", "leftHand"],
+  ["rightLowerArm", "rightHand"],
+];
 // 揺れ物の物理を進める固定の刻み(秒)と、1 フレームで進める最大の回数(_updateVrm)
 const PHYSICS_STEP = 1 / 60;
 const PHYSICS_MAX_STEPS = 4;
@@ -110,8 +144,10 @@ export class SceneManager {
       gust: DEFAULT_GUST, // 風の強弱の揺らぎ(0〜1)。0 なら一定の風
       collision: 0, // スカートの布を押し出す、体のカプセルの大きさ(体の太さに対する倍率)。0 なら補わない
       hairCollision: 0, // 髪の揺れ物に足す当たり判定の大きさ(同上)。0 なら足さない
+      hairFit: false, // hairCollision が 0 のとき、モデルが元から持つ体の当たり判定を服の大きさに広げて髪に使う
     };
     this._clothPush = new WeakMap(); // vrm → { specs, uniforms, meshes }。体のカプセルの測定結果と、押し出しを仕込んだメッシュ
+    this._hairFit = new WeakMap(); // vrm → { joints, original, fitted }。髪の揺れ物の元の当たり判定と、服に合わせて広げたもの
     this._hairCollide = new WeakMap(); // vrm → { specs, group, colliders, joints, base, scale, active }。髪用に足した当たり判定
     this._springManagers = new WeakMap(); // 物理を無効にしている間も、元の manager を保持する
     this._physicsClock = new WeakMap(); // vrm → 揺れ物の物理に、まだ使っていない経過時間(秒)
@@ -698,7 +734,9 @@ export class SceneManager {
    *   hairCollision: 髪の揺れ物に、首・肩・胸・腕の肌や服の表面そのものを当たり判定として足す。0 なら足さない。
    *   毛束の縁の頂点が表面に触れる位置が 1。下げると少しめり込みを許し、上げると浮く(表面を作れなかったときは、カプセルの大きさの倍率)。
    */
-  setPhysics({ enabled, gravity, wind, gust, collision, hairCollision } = {}) {
+  setPhysics(
+    { enabled, gravity, wind, gust, collision, hairCollision, hairFit } = {},
+  ) {
     if (enabled !== undefined) this._physics.enabled = !!enabled;
     if (gravity !== undefined) this._physics.gravity = Math.max(0, gravity);
     if (wind) Object.assign(this._physics.wind, wind);
@@ -709,6 +747,7 @@ export class SceneManager {
     if (hairCollision !== undefined) {
       this._physics.hairCollision = Math.max(0, hairCollision);
     }
+    if (hairFit !== undefined) this._physics.hairFit = !!hairFit;
     for (const vrm of this.vrms) this._applyPhysics(vrm);
   }
 
@@ -774,20 +813,33 @@ export class SceneManager {
   _applyHairCollision(vrm, manager) {
     const scale = this._physics.hairCollision;
     let entry = this._hairCollide.get(vrm);
-    if (!entry && scale <= 0) return;
+    const fit = this._physics.hairFit;
+    if (!entry && scale <= 0) {
+      if (fit || this._hairFit.has(vrm)) {
+        this._useFittedHairColliders(vrm, manager, fit);
+      }
+      return;
+    }
     if (!entry) {
+      this._useFittedHairColliders(vrm, manager, false); // 髪用に足す前の、元の当たり判定に戻す
       entry = this._prepareHairCollision(vrm, manager);
       this._hairCollide.set(vrm, entry);
     }
     entry.scale = scale;
     const active = scale > 0 && entry.colliders.length > 0;
-    if (active !== entry.active) {
+    const fitOn = !active && fit;
+    if (active !== entry.active || fitOn !== entry.fitOn) {
+      entry.fitOn = fitOn;
+      const fitState = this._hairFit.get(vrm);
+      if (fitState) fitState.on = fitOn;
       entry.active = active;
       for (const joint of entry.joints) {
         // colliderGroups の配列はスプリング内のジョイントで共有されていることがあるので、push せず作り直す
         const base = entry.base.get(joint);
         joint.colliderGroups = active
           ? [...base, entry.jointGroups.get(joint) ?? entry.group]
+          : fitOn
+          ? this._hairFit.get(vrm)?.fitted.get(joint) ?? base
           : base;
         // 当たり判定の組が変わったことを manager に知らせる(再登録すると、更新の順序が組み直される)
         manager.deleteJoint(joint);
@@ -874,6 +926,211 @@ export class SceneManager {
     };
   }
 
+  /**
+   * 髪の揺れ物の当たり判定を、服に合わせて広げたものにする(on)か、元に戻す(off)。
+   * 髪の当たり判定の設定(hairCollision)が 0 のときの、髪と服の重なりを減らす。足す当たり判定は無いので、動作は軽い。
+   */
+  _useFittedHairColliders(vrm, manager, on) {
+    let fit = this._hairFit.get(vrm);
+    if (!fit) {
+      fit = this._prepareFittedHairColliders(vrm, manager);
+      this._hairFit.set(vrm, fit);
+    }
+    if (on === fit.on) return;
+    fit.on = on;
+    for (const joint of fit.joints) {
+      joint.colliderGroups = (on ? fit.fitted : fit.original).get(joint);
+      manager.deleteJoint(joint);
+      manager.addJoint(joint);
+    }
+  }
+
+  /**
+   * 髪の揺れ物にだけ使う、肩・腕・胸の服の表面に沿った小さな球の当たり判定を作る(初期姿勢の服の頂点から、一定の間隔で選ぶ)。
+   * 毛束の縁の点(幅の広い毛束の判定)も、この球で判定する。三角形ではなく球との距離だけなので軽い。
+   * 元の当たり判定は書き換えない(髪以外の揺れ物も使うので)。
+   */
+  _prepareFittedHairColliders(vrm, manager) {
+    const fit = {
+      joints: [],
+      original: new Map(),
+      fitted: new Map(),
+      on: false,
+      get active() { // 髪用に足した判定を使っているか(_dampHairCollision が読む)
+        return this.on;
+      },
+    };
+    const humanoidBones = new Set(
+      Object.values(vrm.humanoid.rawHumanBones ?? {}).map((b) => b.node),
+    );
+    const springBones = new Set(); // 揺れ物(髪・スカートなど)のボーン。その頂点は服の形に数えない
+    for (const joint of manager?.joints ?? []) {
+      springBones.add(joint.bone);
+      if (joint.child) springBones.add(joint.child);
+      if (!this._isJointUnder(vrm, joint, humanoidBones, HAIR_ROOTS)) continue;
+      fit.joints.push(joint);
+      fit.original.set(joint, joint.colliderGroups);
+    }
+    const group = { colliders: [], name: "vrm-pose-maker:hair-fit" };
+    const jointGroups = new Map();
+    const axes = new Map(); // 骨 → { target, head, tail }(初期姿勢のワールド座標。測る間だけ使う)
+    for (const [name, next] of HAIR_FIT_BONES) {
+      const bone = vrm.humanoid.getRawBoneNode(name);
+      const target = vrm.humanoid.getRawBoneNode(next);
+      if (bone && target) {
+        axes.set(bone, {
+          target,
+          head: new THREE.Vector3(),
+          tail: new THREE.Vector3(),
+        });
+      }
+    }
+    if (axes.size && fit.joints.length) {
+      let strands = new Map();
+      this._withRestPose(vrm, manager, () => {
+        for (const [bone, axis] of axes) {
+          bone.getWorldPosition(axis.head);
+          axis.target.getWorldPosition(axis.tail);
+        }
+        const seg = new THREE.Line3();
+        const world = new THREE.Vector3();
+        const near = new THREE.Vector3();
+        const out = new THREE.Vector3();
+        const candidates = [];
+        const seen = new Set();
+        const owner = new Map();
+        vrm.scene.traverse((mesh) => {
+          if (!mesh.isSkinnedMesh || !mesh.visible) return;
+          const { skinIndex, skinWeight, position } = mesh.geometry.attributes;
+          if (!skinIndex || !skinWeight) return;
+          if (isSpringMesh(mesh, springBones)) return; // 髪などのメッシュ(揺れない根元の部分も含む)
+          for (let i = 0; i < position.count; i++) {
+            let top = 0;
+            let best = -1;
+            for (let k = 0; k < 4; k++) {
+              const w = skinWeight.getComponent(i, k);
+              if (w > best) {
+                best = w;
+                top = skinIndex.getComponent(i, k);
+              }
+            }
+            const bone = mesh.skeleton.bones[top];
+            const axis = axes.get(bone);
+            if (!axis) continue;
+            if (!owner.has(bone)) owner.set(bone, !springBones.has(bone));
+            if (!owner.get(bone)) continue;
+            mesh.getVertexPosition(i, world).applyMatrix4(mesh.matrixWorld);
+            seg.set(axis.head, axis.tail).closestPointToPoint(
+              world,
+              true,
+              near,
+            );
+            out.subVectors(world, near);
+            const d = out.length();
+            const radius = HAIR_FIT_RADIUS;
+            if (d < radius) continue; // 骨の近く(関節の中など)は、元の判定に任せる
+            // 近い頂点は 1 つにまとめる(球の候補が増えすぎないように)
+            const cellKey = [
+              bone.id,
+              Math.round(world.x / HAIR_FIT_CELL),
+              Math.round(world.y / HAIR_FIT_CELL),
+              Math.round(world.z / HAIR_FIT_CELL),
+            ].join();
+            if (seen.has(cellKey)) continue;
+            seen.add(cellKey);
+            candidates.push({
+              bone,
+              vx: world.x,
+              vy: world.y,
+              vz: world.z,
+              dir: out.clone().sub(near).normalize(), // 骨から表面へ向かう向き(外向き)
+              radius,
+            });
+          }
+        });
+        // 服の表面から飛び出す球は、小さくするか捨てる(肩の先など、表面が骨の向きと食い違う所)
+        const surface = buildWorldSurface(vrm, springBones);
+        const center = new THREE.Vector3();
+        const probe = new THREE.Vector3();
+        const cells = new Set();
+        for (const c of candidates) {
+          if (group.colliders.length >= HAIR_FIT_MAX_SPHERES) break;
+          for (
+            let radius = c.radius;
+            radius >= HAIR_FIT_MIN_RADIUS;
+            radius *= 0.7
+          ) {
+            // 頂点から、外向きの逆へ、半径ぶん引いた位置
+            center.set(c.vx, c.vy, c.vz).addScaledVector(
+              c.dir,
+              -(radius - HAIR_SURFACE_GAP),
+            );
+            let worst = -Infinity;
+            for (const d of PROBE_DIRECTIONS) {
+              probe.copy(center).addScaledVector(d, radius);
+              worst = Math.max(worst, surface(probe.x, probe.y, probe.z));
+              if (worst > HAIR_FIT_MAX_PROTRUSION) break;
+            }
+            if (worst === -Infinity || worst > HAIR_FIT_MAX_PROTRUSION) {
+              continue;
+            }
+            const key = [
+              c.bone.id,
+              Math.round(center.x / HAIR_FIT_CELL),
+              Math.round(center.y / HAIR_FIT_CELL),
+              Math.round(center.z / HAIR_FIT_CELL),
+            ].join();
+            if (cells.has(key)) break;
+            cells.add(key);
+            const inverse = new THREE.Matrix4().copy(c.bone.matrixWorld)
+              .invert();
+            const collider = new VRMSpringBoneCollider(
+              new VRMSpringBoneColliderShapeSphere({
+                radius,
+                offset: center.clone().applyMatrix4(inverse),
+              }),
+            );
+            c.bone.add(collider);
+            group.colliders.push(collider);
+            break;
+          }
+        }
+        if (group.colliders.length) {
+          try {
+            strands = measureStrandSamples(vrm, fit.joints);
+          } catch (error) {
+            console.warn("strand samples failed, using joint tips only", error);
+          }
+        }
+      });
+      // 毛束の縁の点は、専用のコライダー(運び役は、揺れ物ではないボーンの子にする)で、敷き詰めた球に当てる
+      const carrierBone = group.colliders[0]?.parent;
+      if (carrierBone) {
+        for (const [joint, samples] of strands) {
+          const carrier = new VRMSpringBoneCollider(
+            new StrandCollisionShape(group.colliders, joint, samples),
+          );
+          carrierBone.add(carrier);
+          jointGroups.set(joint, {
+            colliders: [carrier],
+            name: "vrm-pose-maker:hair-fit-strand",
+          });
+        }
+      }
+    }
+    for (const joint of fit.joints) {
+      const groups = [...(fit.original.get(joint) ?? [])];
+      if (group.colliders.length) {
+        groups.push(group); // 球の行列を更新させるため、縁の点で判定するジョイントにも入れる
+        const strand = jointGroups.get(joint);
+        if (strand) groups.push(strand);
+      }
+      fit.fitted.set(joint, groups);
+      if (group.colliders.length) this._dampHairCollision(fit, joint); // 縁の点で押し出される揺れ物は、止まりやすくする
+    }
+    return fit;
+  }
+
   _prepareHairCollision(vrm, manager) {
     const entry = {
       specs: [],
@@ -884,6 +1141,7 @@ export class SceneManager {
       jointGroups: new Map(), // joint → 毛束の縁の頂点で判定する、そのジョイント専用の当たり判定の組
       scale: 0,
       active: false,
+      fitOn: false, // 広げた判定を使っているか
     };
     const humanoidBones = new Set(
       Object.values(vrm.humanoid.rawHumanBones ?? {}).map((b) => b.node),

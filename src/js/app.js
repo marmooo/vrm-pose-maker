@@ -334,6 +334,13 @@ class App {
         this._syncPhysicsUi();
       },
     );
+    document.getElementById("physics-hair-fit")?.addEventListener(
+      "change",
+      (e) => {
+        this._scene.setPhysics({ hairFit: e.target.checked });
+        this._syncPhysicsUi();
+      },
+    );
     document.getElementById("btn-settle-physics")?.addEventListener(
       "click",
       () => this._scene.settlePhysics(),
@@ -813,11 +820,14 @@ class App {
 
   /** 物理の設定(ON/OFF・重力)を画面の入力欄に反映する。 */
   _syncPhysicsUi() {
-    const { enabled, gravity, wind, gust, collision, hairCollision } = this
-      ._scene
-      .getPhysics();
+    const { enabled, gravity, wind, gust, collision, hairCollision, hairFit } =
+      this
+        ._scene
+        .getPhysics();
     const toggle = document.getElementById("toggle-physics");
     if (toggle) toggle.checked = enabled;
+    const fit = document.getElementById("physics-hair-fit");
+    if (fit) fit.checked = hairFit ?? false;
     const set = (id, value, digits) => {
       const slider = document.getElementById(id);
       const output = document.getElementById(`${id}-value`);
@@ -843,6 +853,7 @@ class App {
       gust: physics.gust,
       collision: physics.collision,
       hairCollision: physics.hairCollision,
+      hairFit: physics.hairFit,
     });
     this._syncPhysicsUi();
   }

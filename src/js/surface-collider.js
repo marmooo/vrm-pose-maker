@@ -606,6 +606,98 @@ function weldedNormals(world, index, flip) {
 }
 
 /**
+ * メッシュが、揺れ物(髪など)のメッシュか。頂点のうち、揺れ物のボーンが最も強く影響するものの割合で決める。
+ * 髪のメッシュには、揺れない根元の部分もあるので、頂点ごとではなく、メッシュ全体で見る。
+ */
+export function isSpringMesh(mesh, springBones, ratio = 0.2) {
+  const { skinIndex, skinWeight, position } = mesh.geometry.attributes;
+  if (!skinIndex || !skinWeight || !position.count) return false;
+  let count = 0;
+  for (let i = 0; i < position.count; i++) {
+    let top = 0;
+    let best = -1;
+    for (let k = 0; k < 4; k++) {
+      const w = skinWeight.getComponent(i, k);
+      if (w > best) {
+        best = w;
+        top = skinIndex.getComponent(i, k);
+      }
+    }
+    if (springBones.has(mesh.skeleton.bones[top])) count++;
+  }
+  return count / position.count > ratio;
+}
+
+/**
+ * 初期姿勢の、肌・服の表面までの符号付き距離(外側が正、m)を返す関数を作る(ワールド座標)。揺れ物の頂点は使わない。
+ * 表面から reach より遠い点は Infinity。球などの判定が、服の表面から飛び出していないかの確認に使う。
+ *
+ * @param {object} vrm
+ * @param {Set<THREE.Object3D>} skipBones 揺れ物のボーン
+ * @param {number} reach
+ */
+export function buildWorldSurface(vrm, skipBones, reach = 0.06) {
+  vrm.scene.updateMatrixWorld(true);
+  const layers = [];
+  const v = new THREE.Vector3();
+  vrm.scene.traverse((mesh) => {
+    if (!mesh.isSkinnedMesh || !mesh.visible) return;
+    const { position, skinIndex, skinWeight } = mesh.geometry.attributes;
+    if (!position || !skinIndex || !skinWeight || !mesh.geometry.index) return;
+    if (isSpringMesh(mesh, skipBones)) return; // 髪などのメッシュは、服の表面ではない
+    mesh.skeleton.update();
+    const world = new Float32Array(position.count * 3);
+    const skipped = new Uint8Array(position.count);
+    for (let i = 0; i < position.count; i++) {
+      mesh.getVertexPosition(i, v).applyMatrix4(mesh.matrixWorld);
+      world.set([v.x, v.y, v.z], i * 3);
+      let top = 0;
+      let best = -1;
+      for (let k = 0; k < 4; k++) {
+        const w = skinWeight.getComponent(i, k);
+        if (w > best) {
+          best = w;
+          top = skinIndex.getComponent(i, k);
+        }
+      }
+      skipped[i] = skipBones.has(mesh.skeleton.bones[top]) ? 1 : 0;
+    }
+    const index = mesh.geometry.index.array;
+    const normals = weldedNormals(
+      world,
+      index,
+      mesh.matrixWorld.determinant() < 0,
+    );
+    const pos = [];
+    const nor = [];
+    for (let t = 0; t < index.length; t += 3) {
+      if (skipped[index[t]] || skipped[index[t + 1]] || skipped[index[t + 2]]) {
+        continue;
+      }
+      for (let k = 0; k < 3; k++) {
+        const i = index[t + k];
+        pos.push(world[i * 3], world[i * 3 + 1], world[i * 3 + 2]);
+        nor.push(normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]);
+      }
+    }
+    if (pos.length >= 54) {
+      layers.push(
+        new SurfaceLayer(Float32Array.from(pos), Float32Array.from(nor), 0.04),
+      );
+    }
+  });
+  return (x, y, z) => {
+    let best = Infinity;
+    for (const layer of layers) {
+      if (layer.closest(x, y, z, reach) && layer.signedDistance < best) {
+        best = layer.signedDistance;
+      }
+    }
+    return best;
+  };
+}
+
+/**
  * VRM の肌・服のメッシュから、ボーンごとの表面の当たり判定を作る。初期姿勢(Tポーズ)にした状態で呼ぶこと。
  *
  * @param {object} vrm
@@ -769,6 +861,8 @@ const STRAND_MAX_T = 1.5;
 const STRAND_DIRECTIONS = 3;
 const STRAND_BISECT = 7;
 const STRAND_MAX_PUSH = 0.12;
+// 球の判定を、先端から bound + この距離より遠いものは外す(押し出しで先端が動く範囲。ここを超えて動くのは、深く刺さったときだけ)
+const STRAND_CULL_MARGIN = 0.04;
 const STRAND_TOLERANCE = 1e-4;
 
 /**
@@ -924,6 +1018,7 @@ export class StrandCollisionShape {
     this._heading = new THREE.Vector3();
     this._probe = new THREE.Vector3();
     this._world = new Float32Array(ts.length * 3);
+    this._nearby = []; // 今のフレームで、先端に近い判定
   }
 
   get type() {
@@ -977,7 +1072,7 @@ export class StrandCollisionShape {
           .applyQuaternion(quat);
         p.set(tip.x + rotated.x, tip.y + rotated.y, tip.z + rotated.z);
       }
-      for (const c of this.carriers) {
+      for (const c of this._nearby) {
         const d = c.shape.calculateCollision(c.colliderMatrix, p, 0, n);
         if (d >= 0) continue;
         if (d < worst) worst = d;
@@ -1001,19 +1096,33 @@ export class StrandCollisionShape {
       Math.hypot(e[8], e[9], e[10])) / 3;
     const n = this._normal;
 
-    // 先端が、毛束の広がり(bound)以内まで表面に近づいていなければ、どの点も刺さらない
+    // 先端が、毛束の広がり(bound)以内まで表面に近づいていなければ、どの点も刺さらない。
+    // 球の判定は多いので、先端から遠い球は、以降の計算(縁の点・押し出しの二分探索)から外す。
+    const reach = this.bound * scale + STRAND_CULL_MARGIN * scale;
+    const nearby = this._nearby;
+    nearby.length = 0;
     let near = false;
     for (const c of this.carriers) {
+      const radius = c.shape.radius;
+      if (typeof radius === "number") {
+        const m = c.colliderMatrix.elements;
+        const dx = m[12] - tail.x;
+        const dy = m[13] - tail.y;
+        const dz = m[14] - tail.z;
+        const limit = radius + reach;
+        if (dx * dx + dy * dy + dz * dz > limit * limit) continue;
+      }
+      nearby.push(c);
       if (
+        !near &&
         c.shape.calculateCollision(
-          c.colliderMatrix,
-          tail,
-          this.bound * scale,
-          n,
-        ) < 0
+            c.colliderMatrix,
+            tail,
+            this.bound * scale,
+            n,
+          ) < 0
       ) {
         near = true;
-        break;
       }
     }
     if (!near) return 1;
