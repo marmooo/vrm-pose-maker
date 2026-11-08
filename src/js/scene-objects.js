@@ -39,7 +39,16 @@ export class SceneObjects {
 
   /** 置いてある物の一覧(追加した順)。{ id, name } */
   get items() {
-    return this._items.map(({ id, name }) => ({ id, name }));
+    return this._items.map(({ id, name, thumbnail }) => ({
+      id,
+      name,
+      thumbnail,
+    }));
+  }
+
+  /** 置いてある物の root(撮影のとき他の物を隠すのに使う)。 */
+  roots() {
+    return this._items.map((item) => item.root);
   }
 
   get count() {
@@ -89,6 +98,8 @@ export class SceneObjects {
     this._scene.scene.add(root);
     this._items.push(item);
     if (place) this._place(item);
+    // 右パネルの選択アイコン用に、物全体の絵を撮っておく(読み込んだ直後の姿)
+    item.thumbnail = this._scene.captureObjectThumbnail(root);
     this.select(item.id);
     return item;
   }

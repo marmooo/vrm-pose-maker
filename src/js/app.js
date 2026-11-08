@@ -1002,6 +1002,7 @@ class App {
         kind: "object",
         id: o.id,
         name: o.name,
+        thumbnail: o.thumbnail,
       })),
     ];
   }
@@ -1028,11 +1029,11 @@ class App {
     document.getElementById("selection-label").textContent = current
       ? tr("sel.002")
       : tr("sel.001");
-    // 顔アイコン。モデルは顔のサムネイル、オブジェクトは箱のアイコン。名前はホバー(title)で出す。
+    // 顔アイコン。モデルは顔、オブジェクトは全体のサムネイル(撮れなければ箱のアイコン)。名前はホバー(title)で出す。
     const model = current?.kind === "model"
       ? this._models.find((m) => m.id === current.id)
       : null;
-    const thumbnail = model?.thumbnail ?? "";
+    const thumbnail = (model ? model.thumbnail : current?.thumbnail) ?? "";
     face.style.backgroundImage = thumbnail ? `url(${thumbnail})` : "";
     face.innerHTML = thumbnail
       ? ""

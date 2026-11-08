@@ -441,13 +441,6 @@ export class SceneManager {
     if (!this._thumbCamera) {
       this._thumbCamera = new THREE.PerspectiveCamera(30, 1, 0.05, 10);
     }
-    if (!this._thumbTarget || this._thumbTarget.width !== size) {
-      this._thumbTarget?.dispose();
-      this._thumbTarget = new THREE.WebGLRenderTarget(size, size, {
-        samples: 4,
-        type: THREE.UnsignedByteType,
-      });
-    }
 
     // 顔のワールド座標を最新化してから取得
     vrm.scene.updateWorldMatrix(true, false);
@@ -480,11 +473,84 @@ export class SceneManager {
     this._thumbCamera.lookAt(lookTarget);
     this._thumbCamera.updateProjectionMatrix();
 
-    // 他のモデルとグリッドが写り込まないよう一時的に隠す
-    const others = this.vrms.filter((v) => v !== vrm);
-    const prevVisible = others.map((v) => v.scene.visible);
-    others.forEach((v) => {
-      v.scene.visible = false;
+    // 他のモデルとオブジェクトが写り込まないよう隠して撮る
+    const hidden = [
+      ...this.vrms.filter((v) => v !== vrm).map((v) => v.scene),
+      ...(this.sceneObjects?.roots() ?? []),
+    ];
+    return this._renderThumbnail(hidden, size);
+  }
+
+  /**
+   * シーン内のオブジェクト(GLB / FBX)全体が収まる絵を撮る(右パネルの選択アイコン用)。
+   * 斜め前・少し上から、物を包む球が収まる距離で見る。
+   */
+  captureObjectThumbnail(root, size = 128) {
+    this._clearSelectionPulses();
+    this.sceneObjects?.hideHelper();
+    if (!root) return null;
+    root.updateWorldMatrix(true, true);
+    const box = new THREE.Box3().setFromObject(root);
+    if (box.isEmpty()) return null;
+    const sphere = box.getBoundingSphere(new THREE.Sphere());
+    const camera = this._thumbCamera ??
+      (this._thumbCamera = new THREE.PerspectiveCamera(30, 1, 0.05, 10));
+    // 向きを決め、まず十分に離れた所から見て、箱の8つの角がちょうど収まる所まで寄る
+    // (縦長・横長の物でも、外接球より大きく写る)
+    const dir = new THREE.Vector3(0.6, 0.45, 1).normalize();
+    const radius = Math.max(sphere.radius, 0.001);
+    camera.position.copy(sphere.center).addScaledVector(dir, radius * 4);
+    camera.lookAt(sphere.center);
+    camera.updateMatrixWorld(true);
+    const inverse = camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
+    const tanHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+    let back = -Infinity; // カメラを今の位置からどれだけ後ろへ引けば全部入るか
+    for (let i = 0; i < 8; i++) {
+      const corner = new THREE.Vector3(
+        i & 1 ? box.max.x : box.min.x,
+        i & 2 ? box.max.y : box.min.y,
+        i & 4 ? box.max.z : box.min.z,
+      ).applyMatrix4(inverse);
+      const depth = -corner.z;
+      back = Math.max(
+        back,
+        Math.max(Math.abs(corner.x), Math.abs(corner.y)) / tanHalf - depth,
+      );
+    }
+    const distance = Math.max(radius * 4 + back, radius * 0.5) * 1.08;
+    camera.near = distance / 100;
+    camera.far = distance * 4;
+    camera.position.copy(sphere.center).addScaledVector(dir, distance);
+    camera.lookAt(sphere.center);
+    camera.updateProjectionMatrix();
+
+    const hidden = [
+      ...this.vrms.map((v) => v.scene),
+      ...(this.sceneObjects?.roots() ?? []).filter((r) => r !== root),
+    ];
+    const dataUrl = this._renderThumbnail(hidden, size);
+    // 顔サムネイル用に共用しているカメラの範囲を元に戻す
+    camera.near = 0.05;
+    camera.far = 10;
+    camera.updateProjectionMatrix();
+    return dataUrl;
+  }
+
+  /**
+   * _thumbCamera から見た絵を、背景を透明にしてオフスクリーンに描き、PNG の data URL で返す。
+   * @param {THREE.Object3D[]} hidden 写り込まないよう一時的に隠すもの
+   */
+  _renderThumbnail(hidden, size) {
+    if (!this._thumbTarget || this._thumbTarget.width !== size) {
+      this._thumbTarget?.dispose();
+      this._thumbTarget = new THREE.WebGLRenderTarget(size, size, {
+        samples: 4,
+        type: THREE.UnsignedByteType,
+      });
+    }
+    const prevVisible = hidden.map((o) => o.visible);
+    hidden.forEach((o) => {
+      o.visible = false;
     });
     const prevGridVisible = this._grid?.visible;
     if (this._grid) this._grid.visible = false;
@@ -510,12 +576,11 @@ export class SceneManager {
     renderer.setClearColor(prevClearColor, prevClearAlpha);
     const dataUrl = SceneManager._pixelsToDataUrl(pixels, size);
 
-    others.forEach((v, i) => {
-      v.scene.visible = prevVisible[i];
+    hidden.forEach((o, i) => {
+      o.visible = prevVisible[i];
     });
     if (this._grid) this._grid.visible = prevGridVisible;
     this.scene.background = prevBackground;
-
     return dataUrl;
   }
 
