@@ -797,8 +797,9 @@ export class BoneSphere {
   // =========================================================
 
   /**
-   * 肩・指など、骨自体がとても短い部位は「子ボーンまでの距離×1.3」が
-   * 小さくなりすぎて編集しにくい。身長比の下限サイズを部位ごとに設ける。
+   * 指など、骨自体がとても短い部位は「子ボーンまでの距離×1.3」が
+   * 小さくなりすぎて編集しにくい。身長比の下限サイズを部位ごとに設ける
+   * (肩は同じ側の上腕と同じ大きさにする)。
    */
   _calcLimbRadius(boneName) {
     if (!this._vrm) return DEFAULT_RADIUS;
@@ -810,10 +811,12 @@ export class BoneSphere {
       return h * 0.045;
     }
 
-    // 肩: 骨自体が短く「距離×1.3」だと小さくなりがちなので下限を大きめに
-    const minRadius = boneName.includes("Shoulder")
-      ? h * 0.10
-      : Math.max(h * 0.07, DEFAULT_RADIUS);
+    // 肩: 骨自体が短く、球が小さくて画面上で掴めない。同じ側の上腕と同じ大きさにする
+    if (boneName.includes("Shoulder")) {
+      return this._calcLimbRadius(boneName.replace("Shoulder", "UpperArm"));
+    }
+
+    const minRadius = Math.max(h * 0.07, DEFAULT_RADIUS);
 
     const childName = CHILD_MAP[boneName];
     if (!childName) return minRadius;
@@ -822,7 +825,9 @@ export class BoneSphere {
 
     const p = new THREE.Vector3();
     const c = new THREE.Vector3();
-    this._boneNode.getWorldPosition(p);
+    // 肩から呼ばれたとき(上腕の大きさを借りるとき)は、選んでいるボーンではなく boneName 自身で測る
+    (this._vrm.humanoid.getNormalizedBoneNode(boneName) ?? this._boneNode)
+      .getWorldPosition(p);
     childNode.getWorldPosition(c);
     return Math.max(p.distanceTo(c) * 1.3, minRadius);
   }
