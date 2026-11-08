@@ -96,8 +96,6 @@ class App {
     this._inputPose = document.getElementById("input-pose");
     this._btnObjectAdd = document.getElementById("btn-object-add");
     this._inputObject = document.getElementById("input-object");
-    this._modelList = document.getElementById("model-list");
-    this._activeModelName = document.getElementById("active-model-name");
     this._vrmFile = null;
     this._btnScreenshot = document.getElementById("btn-screenshot");
     this._btnCapturePortrait = document.getElementById("btn-capture-portrait");
@@ -131,10 +129,10 @@ class App {
         this._onExpressionChange(name, weight),
     });
 
-    // VRM 以外の 3D オブジェクト(GLB / FBX)。一覧と操作(拡大率・回転)はモデルタブに出す。
+    // VRM 以外の 3D オブジェクト(GLB / FBX)。操作(拡大率・回転)は「ボーン回転」タブに出す。
     this._objects = new SceneObjects(this._scene, {
-      listEl: document.getElementById("object-list"),
       controlsEl: document.getElementById("object-controls"),
+      onChange: () => this._syncSelectionUi(),
     });
     this._scene.sceneObjects = this._objects;
 
@@ -142,7 +140,10 @@ class App {
       // キャンバス上でオブジェクトをクリック/ドラッグした時(選択・移動)
       pickObject: (raycaster) => this._objects.pick(raycaster),
       hasObjectSelection: () => this._objects.selectedId !== null,
-      onObjectSelect: (id) => this._objects.select(id),
+      onObjectSelect: (id) => {
+        this._objects.select(id);
+        if (id) this._showBoneTab(); // 選んだ物の操作は「ボーン回転」タブに出る
+      },
       onObjectDrag: (id, dx, dy) => this._objects.translate(id, dx, dy),
       onBoneSelect: (boneName) => this._onBoneSelectFromCanvas(boneName),
       onBoneChange: (boneName, quaternion) =>
@@ -169,6 +170,7 @@ class App {
         if (model) {
           this._activateModel(model.id, { moveCamera: false });
           this._scene.pulseSelection(model.vrm);
+          this._showBoneTab();
         }
       },
     });
@@ -221,6 +223,7 @@ class App {
     });
 
     this._bindEvents();
+    this._syncSelectionUi();
 
     // 起動時、まだモデルが無ければ選択モーダルを開く
     this._modelPicker.init().then((count) => {
@@ -259,6 +262,24 @@ class App {
         }
       });
     }
+
+    // 選択行(◀ ▶ で前後のモデル・オブジェクトを選ぶ / 削除)
+    document.getElementById("selection-prev")?.addEventListener(
+      "click",
+      () => this._stepSelection(-1),
+    );
+    document.getElementById("selection-next")?.addEventListener(
+      "click",
+      () => this._stepSelection(1),
+    );
+    document.getElementById("selection-remove")?.addEventListener(
+      "click",
+      () => this._onSelectionDelete(),
+    );
+    document.getElementById("selection-face")?.addEventListener(
+      "click",
+      () => this._locateSelection(),
+    );
 
     // ライト/ダークの切り替え(ヘッダーのボタン)に合わせて、背景色の既定値を切り替える
     this._applyThemeToScene();
@@ -964,54 +985,156 @@ class App {
     this._syncAnimationSelect(model);
   }
 
+  /** 選択行(右パネルの先頭)を、今の状態に合わせる。 */
   _renderModelList() {
-    this._modelList.innerHTML = "";
-    if (!this._models.length) {
-      this._modelList.innerHTML = tr("app.016");
+    this._syncSelectionUi();
+  }
+
+  // =========================================================
+  // 選択中のモデル・オブジェクト(右パネル「ボーン回転」タブの先頭行)
+  // =========================================================
+
+  /** シーンにあるモデルとオブジェクトを、モデル→オブジェクトの順に並べたもの。 */
+  _selectionEntries() {
+    return [
+      ...this._models.map((m) => ({ kind: "model", id: m.id, name: m.name })),
+      ...(this._objects?.items ?? []).map((o) => ({
+        kind: "object",
+        id: o.id,
+        name: o.name,
+      })),
+    ];
+  }
+
+  /** 今選ばれているもの。オブジェクトを選んでいればそれ、でなければ編集中のモデル。 */
+  _currentSelection(entries = this._selectionEntries()) {
+    const objectId = this._objects?.selectedId;
+    if (objectId) {
+      return entries.find((e) => e.kind === "object" && e.id === objectId) ??
+        null;
+    }
+    return entries.find((e) =>
+      e.kind === "model" && e.id === this._activeModelId
+    ) ?? null;
+  }
+
+  _syncSelectionUi() {
+    const face = document.getElementById("selection-face");
+    if (!face || !this._objects) return;
+    const entries = this._selectionEntries();
+    const current = this._currentSelection(entries);
+    const index = current ? entries.indexOf(current) : -1;
+
+    document.getElementById("selection-label").textContent = current
+      ? tr("sel.002")
+      : tr("sel.001");
+    // 顔アイコン。モデルは顔のサムネイル、オブジェクトは箱のアイコン。名前はホバー(title)で出す。
+    const model = current?.kind === "model"
+      ? this._models.find((m) => m.id === current.id)
+      : null;
+    const thumbnail = model?.thumbnail ?? "";
+    face.style.backgroundImage = thumbnail ? `url(${thumbnail})` : "";
+    face.innerHTML = thumbnail
+      ? ""
+      : `<svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#${
+        current?.kind === "object" ? "box" : "person-circle"
+      }"/></svg>`;
+    face.title = current?.name ?? "";
+    face.setAttribute("aria-label", current?.name ?? tr("sel.001"));
+    face.disabled = !current;
+    document.getElementById("selection-count").textContent = current
+      ? `${index + 1}/${entries.length}`
+      : "";
+    for (const id of ["selection-prev", "selection-next"]) {
+      document.getElementById(id).disabled = entries.length < 2;
+    }
+    document.getElementById("selection-remove").disabled = !current;
+    this._disarmDelete();
+    // モデルならボーン操作、オブジェクトなら拡大率・回転の操作を出す
+    const showObject = current?.kind === "object";
+    for (
+      const [id, visible] of [
+        ["bone-body", !showObject],
+        ["object-body", showObject],
+      ]
+    ) {
+      const el = document.getElementById(id);
+      el?.classList.toggle("d-none", !visible);
+      el?.classList.toggle("d-flex", visible);
+    }
+  }
+
+  /** 顔アイコンを押したとき: 選んでいるものがどこにあるかを示す(モデルは点滅、オブジェクトは注視)。 */
+  _locateSelection() {
+    const current = this._currentSelection();
+    if (!current) return;
+    if (current.kind === "model") {
+      const model = this._models.find((m) => m.id === current.id);
+      if (model) this._scene.pulseSelection(model.vrm);
+    } else {
+      this._objects.focus(current.id);
+    }
+  }
+
+  _selectEntry(entry) {
+    if (!entry) return;
+    if (entry.kind === "model") {
+      this._activateModel(entry.id);
+      const model = this._models.find((m) => m.id === entry.id);
+      if (model) this._scene.pulseSelection(model.vrm);
+    } else {
+      this._objects.select(entry.id);
+      this._objects.focus(entry.id);
+    }
+  }
+
+  /** 前(-1)/次(+1)のモデル・オブジェクトを選ぶ。端はつながっている。 */
+  _stepSelection(step) {
+    const entries = this._selectionEntries();
+    if (entries.length < 2) return;
+    const current = this._currentSelection(entries);
+    const index = current ? entries.indexOf(current) : 0;
+    this._selectEntry(
+      entries[(index + step + entries.length) % entries.length],
+    );
+  }
+
+  /** ✕ボタン: 1回目で赤くして確認の通知を出し、3秒以内の2回目で削除する。 */
+  _onSelectionDelete() {
+    const current = this._currentSelection();
+    if (!current) return;
+    if (!this._deleteArmed) {
+      this._deleteArmed = true;
+      this._setDeleteArmedUi(true);
+      this._showToast(tr("sel.003", current.name), "warning");
+      this._deleteTimer = setTimeout(() => this._disarmDelete(), 3000);
       return;
     }
-    this._models.forEach((model, index) => {
-      const chip = document.createElement("div");
-      chip.className = "model-chip" +
-        (model.id === this._activeModelId ? " active" : "");
-      chip.title = model.name;
+    this._disarmDelete();
+    if (current.kind === "model") this._removeModel(current.id);
+    else this._objects.remove(current.id);
+  }
 
-      const face = document.createElement("button");
-      face.type = "button";
-      face.className = "model-chip-face";
-      face.setAttribute("aria-label", tr("app.017", model.name));
-      if (model.thumbnail) {
-        face.classList.add("has-thumbnail");
-        face.style.backgroundImage = `url(${model.thumbnail})`;
-      } else {
-        face.innerHTML =
-          '<svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#person-circle"/></svg>';
-      }
-      face.addEventListener("click", () => {
-        this._activateModel(model.id);
-        this._scene.pulseSelection(model.vrm);
-      });
+  _disarmDelete() {
+    clearTimeout(this._deleteTimer);
+    this._deleteArmed = false;
+    this._setDeleteArmedUi(false);
+  }
 
-      const number = document.createElement("span");
-      number.className = "model-chip-number";
-      number.textContent = String(index + 1);
+  _setDeleteArmedUi(armed) {
+    document.getElementById("selection-remove")?.classList.toggle(
+      "armed",
+      armed,
+    );
+  }
 
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "model-chip-remove";
-      remove.title = tr("app.018", model.name);
-      remove.innerHTML =
-        '<svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#x"/></svg>';
-      remove.addEventListener("click", (e) => {
-        e.stopPropagation();
-        this._removeModel(model.id);
-      });
-
-      chip.append(face, number, remove);
-      this._modelList.appendChild(chip);
-    });
-    const active = this._models.find((item) => item.id === this._activeModelId);
-    this._activeModelName.textContent = active ? active.name : tr("app.019");
+  /** 右パネルを「ボーン回転」タブに切り替える(すでに開いていれば何もしない)。 */
+  _showBoneTab() {
+    const radio = document.getElementById("tab-bone");
+    if (radio && !radio.checked) {
+      radio.checked = true;
+      radio.dispatchEvent(new Event("change"));
+    }
   }
 
   /**
@@ -2197,7 +2320,6 @@ class App {
         document.getElementById("expression-controls").innerHTML = tr(
           "app.041",
         );
-        this._activeModelName.textContent = tr("app.019");
         this._setButtonsEnabled(false);
         this._renderModelList();
       }
@@ -2302,6 +2424,7 @@ class App {
   /** キャンバス上クリックからの選択 */
   _onBoneSelectFromCanvas(boneName) {
     this._clearObjectSelection();
+    this._showBoneTab();
     this._ui.selectBone(boneName);
     this._boneSphere.show(boneName);
   }

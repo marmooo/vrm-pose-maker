@@ -163,12 +163,12 @@
       <div id="panel-right" class="bg-body border-start border-secondary d-flex flex-column" style="width:240px; min-width:200px;">
         <div class="p-2 border-bottom border-secondary">
           <div class="btn-group btn-group-sm w-100" role="group" aria-label="Switch right panel">
-            <input type="radio" class="btn-check" name="right-panel-tab" id="tab-model" autocomplete="off">
-            <label class="btn btn-outline-primary" for="tab-model" title="Models & poses">
+            <input type="radio" class="btn-check" name="right-panel-tab" id="tab-bone" autocomplete="off" checked>
+            <label class="btn btn-outline-primary" for="tab-bone" title="Bones / Object">
               <svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#people"/></svg>
             </label>
-            <input type="radio" class="btn-check" name="right-panel-tab" id="tab-bone" autocomplete="off" checked>
-            <label class="btn btn-outline-primary" for="tab-bone" title="Bones">
+            <input type="radio" class="btn-check" name="right-panel-tab" id="tab-model" autocomplete="off">
+            <label class="btn btn-outline-primary" for="tab-model" title="Poses">
               <svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#person-arms-up"/></svg>
             </label>
             <input type="radio" class="btn-check" name="right-panel-tab" id="tab-expression" autocomplete="off">
@@ -189,23 +189,9 @@
         <!-- Models & poses tab -->
         <div id="panel-tab-model" class="d-none flex-column flex-grow-1 overflow-hidden">
           <div class="p-2 border-bottom border-secondary">
-            <div class="small fw-bold text-secondary mb-2"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#people"/></svg>Models & poses</div>
-            <div class="small text-secondary">Model being edited</div>
-            <div id="active-model-name" class="active-model-name text-truncate">Please load a model</div>
-          </div>
-          <div class="p-2 border-bottom border-secondary">
-            <div class="small text-secondary mb-1">Models in the scene</div>
-            <div id="model-list" class="model-list"><div class="text-secondary small">No models</div></div>
-          </div>
-          <div class="p-2 border-bottom border-secondary overflow-auto flex-shrink-0" style="max-height: 50vh;">
-            <div class="small text-secondary mb-1">Objects in the scene</div>
-            <button id="btn-object-add" class="btn btn-sm btn-outline-body w-100 mb-2" title="Add a GLB / FBX file as an object (prop, set…) without checking whether it is an animation"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#plus-lg"/></svg>Add object</button>
-            <input type="file" id="input-object" accept=".glb,.gltf,.fbx" multiple class="d-none" />
-            <div id="object-list"></div>
-            <div id="object-controls" class="mt-2"></div>
+            <div class="small fw-bold text-secondary"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#person-arms-up"/></svg>Poses</div>
           </div>
           <div class="flex-grow-1 overflow-auto p-2">
-            <button id="btn-model-add" class="btn btn-sm btn-outline-body w-100 mb-3"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#plus-lg"/></svg>Add VRM</button>
             <div class="small text-secondary mb-1">Pose of the selected model</div>
             <div class="d-grid gap-2">
               <button id="btn-load-pose" class="btn btn-sm btn-outline-warning" disabled title="Load a GLB / FBX / VRMA file. Animations are applied to the selected model; files without a human animation are added as objects"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#upload"/></svg>Load pose</button>
@@ -223,6 +209,27 @@
 
         <!-- Bones tab -->
         <div id="panel-tab-bone" class="d-flex flex-column flex-grow-1 overflow-hidden">
+        <div class="p-2 border-bottom border-secondary" id="selection-bar">
+          <div id="selection-label" class="small text-secondary mb-1 text-truncate"></div>
+          <div class="d-flex align-items-center justify-content-center gap-1">
+            <button type="button" id="selection-prev" class="btn btn-sm btn-outline-secondary px-1" title="Select previous model or object" aria-label="Select previous model or object"><svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#chevron-left"/></svg></button>
+            <div class="selection-chip">
+              <button type="button" id="selection-face" class="selection-face" role="img"></button>
+              <span id="selection-count" class="selection-count"></span>
+              <button type="button" id="selection-remove" class="selection-remove" title="Remove the selection from the scene" aria-label="Remove the selection from the scene"><svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#x"/></svg></button>
+            </div>
+            <button type="button" id="selection-next" class="btn btn-sm btn-outline-secondary px-1" title="Select next model or object" aria-label="Select next model or object"><svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#chevron-right"/></svg></button>
+            <div class="dropdown ms-1">
+              <button type="button" id="selection-add" class="btn btn-sm btn-outline-body px-2" data-bs-toggle="dropdown" data-bs-popper-config='{"strategy":"fixed"}' aria-expanded="false" title="Add" aria-label="Add"><svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#plus-lg"/></svg></button>
+              <ul class="dropdown-menu dropdown-menu-end">
+                <li><button type="button" id="btn-model-add" class="dropdown-item small">Add VRM</button></li>
+                <li><button type="button" id="btn-object-add" class="dropdown-item small" title="Add a GLB / FBX file as an object (prop, set…) without checking whether it is an animation">Add object</button></li>
+              </ul>
+            </div>
+          </div>
+          <input type="file" id="input-object" accept=".glb,.gltf,.fbx" multiple class="d-none" />
+        </div>
+        <div id="bone-body" class="d-flex flex-column flex-grow-1 overflow-hidden">
         <div class="p-2 border-bottom border-secondary">
           <div class="d-flex align-items-center justify-content-between">
             <span class="small fw-bold text-secondary">
@@ -281,6 +288,10 @@
         </div>
         <div id="bone-controls" class="flex-grow-1 overflow-auto p-2">
           <div class="text-secondary small p-2">Please select a bone</div>
+        </div>
+        </div>
+        <div id="object-body" class="d-none flex-column flex-grow-1 overflow-auto p-2">
+          <div id="object-controls"></div>
         </div>
         </div>
 
@@ -522,10 +533,7 @@
       "app.013": "Unsupported file (.vrm / .glb / .fbx / .vrma / .vrmposer.json / image / video)",
       "app.014": "Please load a VRM model first",
       "app.015": "Only one pose can be applied: {0}",
-      "app.016": "<div class=\"text-secondary small\">No models</div>",
-      "app.017": "Select {0}",
       "app.018": "Remove {0} from the scene",
-      "app.019": "Please load a model",
       "app.020": "Unsupported file format (choose .glb / .fbx / .vrma)",
       "app.021": "Failed to load pose",
       "app.022": "{0} is not a supported file format (.glb / .fbx / .vrma)",
@@ -559,14 +567,17 @@
       "app.050": "Saved {0}",
       "app.051": "Expressions randomized",
       "app.052": "Random pose failed (could not load the joint limit data)",
-      "obj.001": "No objects",
       "obj.002": "Scale",
       "obj.003": "Rotation (Y)",
-      "obj.004": "Remove {0} from the scene",
       "obj.005": "Added {0} as an object",
       "obj.006": "Could not load the object: {0}",
       "obj.007": "No visible geometry was found in this file",
       "obj.008": "Reset",
+      "sel.001": "Select a model or an object",
+      "sel.002": "Now editing",
+      "sel.003": "Click again to remove {0}",
+      "obj.009": "Rotation (X)",
+      "obj.010": "Rotation (Z)",
       "picker.001": "{0} (portrait)",
       "picker.002": "{0} (full body)",
       "picker.003": "No preview image",

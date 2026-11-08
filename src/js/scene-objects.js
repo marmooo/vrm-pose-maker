@@ -23,18 +23,23 @@ export class SceneObjects {
   /**
    * @param {import('./scene.js').SceneManager} sceneManager
    * @param {object} options
-   * @param {HTMLElement} options.listEl 一覧を描く要素
    * @param {HTMLElement} options.controlsEl 選択中の物の操作(拡大率・回転)を描く要素
+   * @param {() => void} [options.onChange] 物の追加・削除・選択が変わったときに呼ぶ
    */
-  constructor(sceneManager, { listEl, controlsEl }) {
+  constructor(sceneManager, { controlsEl, onChange }) {
     this._scene = sceneManager;
-    this._listEl = listEl;
     this._controlsEl = controlsEl;
+    this._onChange = onChange ?? null;
     this._items = [];
     this._selectedId = null;
     this._helper = null;
     this._counter = 0;
-    this._render();
+    this._renderControls();
+  }
+
+  /** 置いてある物の一覧(追加した順)。{ id, name } */
+  get items() {
+    return this._items.map(({ id, name }) => ({ id, name }));
   }
 
   get count() {
@@ -57,6 +62,8 @@ export class SceneObjects {
   async addFromFile(file, { place = true } = {}) {
     const { model, animations, centimeters } = await this._parse(file);
     const root = new THREE.Group();
+    // 向き(Y)を一番外側にして、X・Z の傾きはその向きに対して掛ける
+    root.rotation.order = "YXZ";
     this._normalize(model, root, centimeters);
     root.add(model);
     model.traverse((obj) => {
@@ -203,6 +210,19 @@ export class SceneObjects {
     return best;
   }
 
+  /** 画面外に出た物を探せるよう、注視点とカメラをその物の中心へ動かす(見る向きと距離は変えない)。 */
+  focus(id) {
+    const item = this._items.find((i) => i.id === id);
+    if (!item) return;
+    const center = new THREE.Box3().setFromObject(item.root).getCenter(
+      new THREE.Vector3(),
+    );
+    const delta = center.sub(this._scene.controls.target);
+    this._scene.controls.target.add(delta);
+    this._scene.camera.position.add(delta);
+    this._scene.controls.update();
+  }
+
   /** 画面の平面に沿って(カメラの右・上方向へ)ピクセル単位で動かす。 */
   translate(id, dx, dy) {
     const item = this._items.find((i) => i.id === id);
@@ -267,40 +287,8 @@ export class SceneObjects {
   // =========================================================
 
   _render() {
-    if (!this._listEl) return;
-    this._listEl.replaceChildren();
-    if (!this._items.length) {
-      const empty = document.createElement("div");
-      empty.className = "text-secondary small";
-      empty.textContent = tr("obj.001");
-      this._listEl.append(empty);
-    }
-    for (const item of this._items) {
-      const row = document.createElement("div");
-      row.className = "d-flex align-items-center gap-1 mb-1";
-
-      const select = document.createElement("button");
-      select.type = "button";
-      select.className = "btn btn-sm flex-grow-1 text-start text-truncate " +
-        (item.id === this._selectedId
-          ? "btn-primary"
-          : "btn-outline-secondary");
-      select.textContent = item.name;
-      select.title = item.name;
-      select.addEventListener("click", () => this.select(item.id));
-
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "btn btn-sm btn-outline-danger";
-      remove.title = tr("obj.004", item.name);
-      remove.innerHTML =
-        `<svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="${ICON_SPRITE}#x"/></svg>`;
-      remove.addEventListener("click", () => this.remove(item.id));
-
-      row.append(select, remove);
-      this._listEl.append(row);
-    }
     this._renderControls();
+    this._onChange?.();
   }
 
   _renderControls() {
@@ -373,6 +361,26 @@ export class SceneObjects {
       0,
       (v) => `${Math.round(v)}°`,
       (v) => (item.root.rotation.y = THREE.MathUtils.degToRad(v)),
+    );
+    slider(
+      tr("obj.009"),
+      -90,
+      90,
+      1,
+      Math.round(THREE.MathUtils.radToDeg(item.root.rotation.x)),
+      0,
+      (v) => `${Math.round(v)}°`,
+      (v) => (item.root.rotation.x = THREE.MathUtils.degToRad(v)),
+    );
+    slider(
+      tr("obj.010"),
+      -180,
+      180,
+      1,
+      Math.round(THREE.MathUtils.radToDeg(item.root.rotation.z)),
+      0,
+      (v) => `${Math.round(v)}°`,
+      (v) => (item.root.rotation.z = THREE.MathUtils.degToRad(v)),
     );
   }
 }

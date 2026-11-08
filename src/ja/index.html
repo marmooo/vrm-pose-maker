@@ -163,12 +163,12 @@
       <div id="panel-right" class="bg-body border-start border-secondary d-flex flex-column" style="width:240px; min-width:200px;">
         <div class="p-2 border-bottom border-secondary">
           <div class="btn-group btn-group-sm w-100" role="group" aria-label="右パネル切替">
-            <input type="radio" class="btn-check" name="right-panel-tab" id="tab-model" autocomplete="off">
-            <label class="btn btn-outline-primary" for="tab-model" title="モデル・ポーズ">
+            <input type="radio" class="btn-check" name="right-panel-tab" id="tab-bone" autocomplete="off" checked>
+            <label class="btn btn-outline-primary" for="tab-bone" title="ボーン / オブジェクト">
               <svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#people"/></svg>
             </label>
-            <input type="radio" class="btn-check" name="right-panel-tab" id="tab-bone" autocomplete="off" checked>
-            <label class="btn btn-outline-primary" for="tab-bone" title="ボーン">
+            <input type="radio" class="btn-check" name="right-panel-tab" id="tab-model" autocomplete="off">
+            <label class="btn btn-outline-primary" for="tab-model" title="ポーズ">
               <svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#person-arms-up"/></svg>
             </label>
             <input type="radio" class="btn-check" name="right-panel-tab" id="tab-expression" autocomplete="off">
@@ -189,23 +189,9 @@
         <!-- モデル・ポーズ タブ -->
         <div id="panel-tab-model" class="d-none flex-column flex-grow-1 overflow-hidden">
           <div class="p-2 border-bottom border-secondary">
-            <div class="small fw-bold text-secondary mb-2"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#people"/></svg>モデル・ポーズ</div>
-            <div class="small text-secondary">現在編集しているモデル</div>
-            <div id="active-model-name" class="active-model-name text-truncate">モデルを読み込んでください</div>
-          </div>
-          <div class="p-2 border-bottom border-secondary">
-            <div class="small text-secondary mb-1">シーン内のモデル</div>
-            <div id="model-list" class="model-list"><div class="text-secondary small">モデルはありません</div></div>
-          </div>
-          <div class="p-2 border-bottom border-secondary overflow-auto flex-shrink-0" style="max-height: 50vh;">
-            <div class="small text-secondary mb-1">シーン内のオブジェクト</div>
-            <button id="btn-object-add" class="btn btn-sm btn-outline-body w-100 mb-2" title="GLB / FBX を、アニメーションかどうかの判定をせずにオブジェクト(小物・セットなど)として追加します"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#plus-lg"/></svg>オブジェクトを追加</button>
-            <input type="file" id="input-object" accept=".glb,.gltf,.fbx" multiple class="d-none" />
-            <div id="object-list"></div>
-            <div id="object-controls" class="mt-2"></div>
+            <div class="small fw-bold text-secondary"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#person-arms-up"/></svg>ポーズ</div>
           </div>
           <div class="flex-grow-1 overflow-auto p-2">
-            <button id="btn-model-add" class="btn btn-sm btn-outline-body w-100 mb-3"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#plus-lg"/></svg>VRM を追加</button>
             <div class="small text-secondary mb-1">選択中のモデルのポーズ</div>
             <div class="d-grid gap-2">
               <button id="btn-load-pose" class="btn btn-sm btn-outline-warning" disabled title="GLB / FBX / VRMA を読み込みます。人型のアニメーションは選択中のモデルに適用し、それ以外はオブジェクトとして追加します"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#upload"/></svg>ポーズ読込</button>
@@ -223,6 +209,27 @@
 
         <!-- ボーン タブ -->
         <div id="panel-tab-bone" class="d-flex flex-column flex-grow-1 overflow-hidden">
+        <div class="p-2 border-bottom border-secondary" id="selection-bar">
+          <div id="selection-label" class="small text-secondary mb-1 text-truncate"></div>
+          <div class="d-flex align-items-center justify-content-center gap-1">
+            <button type="button" id="selection-prev" class="btn btn-sm btn-outline-secondary px-1" title="前のモデル・オブジェクトを選択" aria-label="前のモデル・オブジェクトを選択"><svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#chevron-left"/></svg></button>
+            <div class="selection-chip">
+              <button type="button" id="selection-face" class="selection-face" role="img"></button>
+              <span id="selection-count" class="selection-count"></span>
+              <button type="button" id="selection-remove" class="selection-remove" title="選択中のものをシーンから削除" aria-label="選択中のものをシーンから削除"><svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#x"/></svg></button>
+            </div>
+            <button type="button" id="selection-next" class="btn btn-sm btn-outline-secondary px-1" title="次のモデル・オブジェクトを選択" aria-label="次のモデル・オブジェクトを選択"><svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#chevron-right"/></svg></button>
+            <div class="dropdown ms-1">
+              <button type="button" id="selection-add" class="btn btn-sm btn-outline-body px-2" data-bs-toggle="dropdown" data-bs-popper-config='{"strategy":"fixed"}' aria-expanded="false" title="追加" aria-label="追加"><svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#plus-lg"/></svg></button>
+              <ul class="dropdown-menu dropdown-menu-end">
+                <li><button type="button" id="btn-model-add" class="dropdown-item small">VRM を追加</button></li>
+                <li><button type="button" id="btn-object-add" class="dropdown-item small" title="GLB / FBX を、アニメーションかどうかの判定をせずにオブジェクト(小物・セットなど)として追加します">オブジェクトを追加</button></li>
+              </ul>
+            </div>
+          </div>
+          <input type="file" id="input-object" accept=".glb,.gltf,.fbx" multiple class="d-none" />
+        </div>
+        <div id="bone-body" class="d-flex flex-column flex-grow-1 overflow-hidden">
         <div class="p-2 border-bottom border-secondary">
           <div class="d-flex align-items-center justify-content-between">
             <span class="small fw-bold text-secondary">
@@ -281,6 +288,10 @@
         </div>
         <div id="bone-controls" class="flex-grow-1 overflow-auto p-2">
           <div class="text-secondary small p-2">ボーンを選択してください</div>
+        </div>
+        </div>
+        <div id="object-body" class="d-none flex-column flex-grow-1 overflow-auto p-2">
+          <div id="object-controls"></div>
         </div>
         </div>
 
@@ -522,10 +533,7 @@
       "app.013": "対応していないファイルです(.vrm / .glb / .fbx / .vrma / .vrmposer.json / 画像 / 動画)",
       "app.014": "先に VRM モデルを読み込んでください",
       "app.015": "ポーズは1つだけ適用します: {0}",
-      "app.016": "<div class=\"text-secondary small\">モデルはありません</div>",
-      "app.017": "{0}を選択",
       "app.018": "{0} をシーンから削除",
-      "app.019": "モデルを読み込んでください",
       "app.020": "対応していないファイル形式です(.glb / .fbx / .vrma を選択してください)",
       "app.021": "ポーズの読み込みに失敗しました",
       "app.022": "{0} は対応していないファイル形式です(.glb / .fbx / .vrma)",
@@ -559,14 +567,17 @@
       "app.050": "{0} を保存しました",
       "app.051": "表情をランダムにしました",
       "app.052": "ランダムポーズに失敗しました（可動域データを読み込めません）",
-      "obj.001": "オブジェクトはありません",
       "obj.002": "拡大率",
       "obj.003": "回転(Y)",
-      "obj.004": "{0} をシーンから外す",
       "obj.005": "{0} をオブジェクトとして追加しました",
       "obj.006": "オブジェクトを読み込めませんでした: {0}",
       "obj.007": "このファイルには表示できる形状がありません",
       "obj.008": "リセット",
+      "sel.001": "モデルかオブジェクトを選んでください",
+      "sel.002": "編集中",
+      "sel.003": "もう一度押すと {0} を削除します",
+      "obj.009": "回転(X)",
+      "obj.010": "回転(Z)",
       "picker.001": "{0}(半身)",
       "picker.002": "{0}(全身)",
       "picker.003": "プレビュー画像がありません",

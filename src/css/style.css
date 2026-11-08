@@ -258,12 +258,6 @@ body {
   width: 4.5rem;
 }
 
-.active-model-name {
-  color: #fff;
-  font-size: 0.86rem;
-  font-weight: 600;
-}
-
 .bone-help-scroll {
   /* 操作方法の説明が長くなっても画面に収まりきらないことがないよう、
      念のためこのブロック自体をスクロール可能にしておく。 */
@@ -271,32 +265,24 @@ body {
   overflow-y: auto;
 }
 
-.model-list {
-  display: flex;
-  flex-wrap: wrap;
-  align-content: flex-start;
-  gap: 12px;
-  max-height: 10rem;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 6px 4px;
-}
-
-/* モデル1体分のチップ。ファイル名の長さに関係なく常に固定サイズなので、
-   パネル外にはみ出したり削除ボタンが押せなくなったりしない。 */
-.model-chip {
+/* 右パネル先頭の「選択中のモデル・オブジェクト」の顔アイコン(64px) */
+.selection-chip {
   position: relative;
   width: 64px;
   height: 64px;
   flex: 0 0 auto;
+  margin: 0 4px;
 }
 
-.model-chip-face {
+.selection-face {
   width: 100%;
   height: 100%;
   border-radius: 50%;
-  border: 2px solid #555;
+  border: 2px solid #0d6efd;
+  box-shadow: 0 0 0 2px rgba(13, 110, 253, .5);
   background-color: #2a2a3d;
+  background-size: cover;
+  background-position: center 30%; /* 頭頂〜あご中心にクロップし、顔が真ん中に来るよう寄せる */
   color: #ccc;
   display: flex;
   align-items: center;
@@ -307,18 +293,13 @@ body {
   cursor: pointer;
 }
 
-.model-chip-face.has-thumbnail {
-  background-size: cover;
-  background-position: center 30%; /* 頭頂〜あご中心にクロップし、顔が真ん中に来るよう寄せる */
+.selection-face:disabled {
+  border-color: #555;
+  box-shadow: none;
+  cursor: default;
 }
 
-.model-chip.active .model-chip-face {
-  /* background-image(顔サムネイル)を消さないよう、border-colorだけを変える */
-  border-color: #0d6efd;
-  box-shadow: 0 0 0 2px rgba(13, 110, 253, .5);
-}
-
-.model-chip-number {
+.selection-count {
   position: absolute;
   right: -4px;
   bottom: -4px;
@@ -328,22 +309,25 @@ body {
   border-radius: 10px;
   background: #0d6efd;
   color: #fff;
-  font-size: 0.75rem;
-  font-weight: 700;
+  font-size: 0.7rem;
   line-height: 20px;
   text-align: center;
   pointer-events: none;
 }
 
-.model-chip-remove {
+.selection-count:empty {
+  display: none;
+}
+
+.selection-remove {
   position: absolute;
+  right: -6px;
   top: -6px;
-  left: -6px;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
+  border: 0;
   border-radius: 50%;
-  border: none;
-  background: #dc3545;
+  background: #6c757d;
   color: #fff;
   font-size: 0.8rem;
   line-height: 1;
@@ -354,8 +338,13 @@ body {
   cursor: pointer;
 }
 
-.model-chip-remove:hover {
+.selection-remove:hover,
+.selection-remove.armed {
   background: #bb2d3b;
+}
+
+.selection-remove:disabled {
+  display: none;
 }
 
 .expression-value-input {
@@ -548,8 +537,8 @@ input[type="range"] {
 [data-bs-theme="light"] .bone-tool-btn:hover { background: rgba(0, 0, 0, 0.1); color: #000; }
 [data-bs-theme="light"] .bone-item:hover { background: rgba(0, 0, 0, 0.07); color: #000; }
 [data-bs-theme="light"] .bone-item.selected { background: rgba(13, 110, 253, 0.18); color: #0a58ca; }
-[data-bs-theme="light"] .active-model-name { color: var(--bs-emphasis-color); }
-[data-bs-theme="light"] .model-chip-face { border-color: #adb5bd; background-color: #e9ecef; color: #495057; }
+[data-bs-theme="light"] .selection-face { border-color: #0d6efd; background-color: #e9ecef; color: #495057; }
+[data-bs-theme="light"] .selection-face:disabled { border-color: #adb5bd; }
 [data-bs-theme="light"] #bone-controls-help-body { color: #495057; }
 [data-bs-theme="light"] #bone-controls-help-body .text-info-emphasis { border-top-color: #ced4da; }
 [data-bs-theme="light"] ::-webkit-scrollbar-track { background: #e9ecef; }
