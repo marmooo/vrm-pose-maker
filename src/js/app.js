@@ -145,6 +145,12 @@ class App {
         if (id) this._showBoneTab(); // 選んだ物の操作は「ボーン回転」タブに出る
       },
       onObjectDrag: (id, dx, dy) => this._objects.translate(id, dx, dy),
+      // キャンバス上のギズモ(回転リング・拡大縮小ハンドル)
+      hitObjectGizmo: (raycaster) => this._objects.hitGizmo(raycaster),
+      onObjectGizmoRotate: (axis, angle) =>
+        this._objects.rotateAboutCenter(axis, angle),
+      onObjectGizmoScale: (scale) => this._objects.setScaleAboutCenter(scale),
+      onObjectGizmoEnd: () => this._objects.endGizmo(),
       onBoneSelect: (boneName) => this._onBoneSelectFromCanvas(boneName),
       onBoneChange: (boneName, quaternion) =>
         this._onBoneChange(boneName, quaternion),

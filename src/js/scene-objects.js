@@ -10,6 +10,7 @@
  */
 import * as THREE from "three";
 import { createGLTFLoader } from "./gltf-loader.js";
+import { ObjectGizmo } from "./object-gizmo.js";
 import { Exporter } from "./exporter.js";
 import { tr } from "./i18n.js";
 
@@ -17,6 +18,9 @@ import { tr } from "./i18n.js";
 const MIN_SIZE = 0.05;
 const MAX_SIZE = 10;
 const HIGHLIGHT_COLOR = 0x4dabf7;
+// 拡大率の範囲(パネルのスライダーと同じ)
+const SCALE_MIN = 0.1;
+const SCALE_MAX = 5;
 const ICON_SPRITE = "/vrm-pose-maker/icons/bootstrap-icons.svg";
 
 export class SceneObjects {
@@ -30,6 +34,7 @@ export class SceneObjects {
     this._scene = sceneManager;
     this._controlsEl = controlsEl;
     this._onChange = onChange ?? null;
+    this._gizmo = new ObjectGizmo(sceneManager); // キャンバス上の回転・拡大縮小
     this._items = [];
     this._selectedId = null;
     this._helper = null;
@@ -199,6 +204,7 @@ export class SceneObjects {
       this._helper.material.dispose();
       this._helper = null;
     }
+    this._gizmo.attach(item?.root ?? null);
     if (item) {
       this._helper = new THREE.BoxHelper(item.root, HIGHLIGHT_COLOR);
       this._helper.material.depthTest = false;
@@ -252,6 +258,7 @@ export class SceneObjects {
 
   /** 毎フレーム呼ばれる。選択枠を物の動きに追従させる。 */
   update() {
+    this._gizmo.update();
     if (!this._helper) return;
     this._helper.update();
     this._helper.visible = true;
@@ -260,6 +267,45 @@ export class SceneObjects {
   /** 撮影・書き出しに選択枠が映り込まないよう、次のフレームまで隠す。 */
   hideHelper() {
     if (this._helper) this._helper.visible = false;
+    this._gizmo.hide();
+  }
+
+  // =========================================================
+  // キャンバス上のギズモ(回転・拡大縮小)
+  // =========================================================
+
+  /** レイが当たるギズモの部品(rotate / scale)。当たらなければ null。当たったらその部品を強調する。 */
+  hitGizmo(raycaster) {
+    const hit = this._gizmo.hitTest(raycaster);
+    this._gizmo.setActive(hit ? (hit.key ?? "scale") : null);
+    return hit;
+  }
+
+  /** ワールドの軸 axis まわりに、物の中心を動かさずに angle(ラジアン)回す。 */
+  rotateAboutCenter(axis, angle) {
+    const item = this._items.find((i) => i.id === this._selectedId);
+    if (!item) return;
+    const center = this._gizmo.center;
+    const q = new THREE.Quaternion().setFromAxisAngle(axis, angle);
+    item.root.quaternion.premultiply(q);
+    item.root.position.sub(center).applyQuaternion(q).add(center);
+  }
+
+  /** 物の中心を動かさずに、拡大率を scale にする(スライダーと同じ範囲に収める)。 */
+  setScaleAboutCenter(scale) {
+    const item = this._items.find((i) => i.id === this._selectedId);
+    if (!item) return;
+    const next = THREE.MathUtils.clamp(scale, SCALE_MIN, SCALE_MAX);
+    const center = this._gizmo.center;
+    const factor = next / item.root.scale.x;
+    item.root.scale.setScalar(next);
+    item.root.position.sub(center).multiplyScalar(factor).add(center);
+  }
+
+  /** ギズモの操作が終わったとき。強調を戻し、パネルのスライダーを今の値に合わせる。 */
+  endGizmo() {
+    this._gizmo.setActive(null);
+    this._renderControls();
   }
 
   // =========================================================
@@ -355,8 +401,8 @@ export class SceneObjects {
 
     slider(
       tr("obj.002"),
-      0.1,
-      5,
+      SCALE_MIN,
+      SCALE_MAX,
       0.05,
       item.root.scale.x,
       1,
