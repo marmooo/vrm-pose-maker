@@ -2,6 +2,7 @@
  * scene.js - Three.js シーン管理・カメラ・レンダリング・OrbitControls
  */
 import * as THREE from "three";
+import { GroundContact } from "./ground-contact.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import {
   buildSurfaceShapes,
@@ -174,6 +175,8 @@ export class SceneManager {
     this._hairCollide = new WeakMap(); // vrm → { specs, group, colliders, joints, base, scale, active }。髪用に足した当たり判定
     this._springManagers = new WeakMap(); // 物理を無効にしている間も、元の manager を保持する
     this._physicsClock = new WeakMap(); // vrm → 揺れ物の物理に、まだ使っていない経過時間(秒)
+    this._groundEnabled = false; // 体が地面にめり込まないようにする(既定オフ。標準動作ではないため)
+    this._groundContacts = new WeakMap(); // vrm → GroundContact(最低点の計測用の頂点)
     this._windForce = new THREE.Vector3();
     this._jointForce = new THREE.Vector3();
 
@@ -279,6 +282,7 @@ export class SceneManager {
     const manager = vrm.springBoneManager;
     if (!manager) {
       vrm.update(delta);
+      this._applyGroundContact(vrm);
       return;
     }
     vrm.springBoneManager = null; // 揺れ物以外(表情・視線・拘束・マテリアル)は、これまでどおり経過時間で進める
@@ -287,6 +291,7 @@ export class SceneManager {
     } finally {
       vrm.springBoneManager = manager;
     }
+    this._applyGroundContact(vrm); // 体を地面に接地させる(揺れ物の計算より前に、モデルの高さを決める)
     this._refreshStrict(vrm); // 厳密な当たり判定の球を、今のボーンの位置に合わせる
     let pending = (this._physicsClock.get(vrm) ?? 0) + delta;
     let steps = 0;
@@ -297,6 +302,46 @@ export class SceneManager {
     }
     // 遅いマシンで追いつけないときは、遅れを捨てる(物理の時間が少し遅くなるだけで、暴走しない)
     this._physicsClock.set(vrm, steps >= PHYSICS_MAX_STEPS ? 0 : pending);
+  }
+
+  /** 体が地面にめり込まないようにする(めり込む分だけ持ち上げる。浮いている分には何もしない)。 */
+  setGroundContact(enabled) {
+    this._groundEnabled = !!enabled;
+  }
+
+  getGroundContact() {
+    return !!this._groundEnabled;
+  }
+
+  /**
+   * 体が地面にめり込まないようにする(片側だけの制約)。
+   * 体のいちばん低い点(立っていれば足裏、座っていればお尻、寝ていれば背中など)が
+   * 床(y=0)より下に行くときだけ、その分モデルを持ち上げる。空中に浮いている分には何もしない。
+   * 持ち上げた量は vrm.scene.userData.groundLift に覚えておく(プロジェクトにも保存する)。
+   * ポーズを戻して持ち上げが要らなくなれば、その分だけ自動で戻る(浮かせた高さは動かさない)。
+   * 何も動いていなければ差は 0 なので、揺れ物には影響しない。
+   */
+  _applyGroundContact(vrm) {
+    const data = vrm.scene.userData;
+    if (!this._groundEnabled) {
+      data.groundLift = 0; // オフにしたら持ち上げ量は捨てる(今の高さはそのまま)
+      return;
+    }
+    let contact = this._groundContacts.get(vrm);
+    if (!contact) {
+      contact = new GroundContact(vrm);
+      this._groundContacts.set(vrm, contact);
+    }
+    vrm.scene.updateMatrixWorld(true);
+    const lowest = contact.lowestY();
+    if (lowest === null) return;
+    const lift = data.groundLift || 0;
+    // lowest は持ち上げ後の高さ。持ち上げなしなら lowest - lift なので、必要な持ち上げ量は lift - lowest
+    const needed = Math.max(0, lift - lowest);
+    if (Math.abs(needed - lift) < 1e-5) return;
+    vrm.scene.position.y += needed - lift;
+    data.groundLift = needed;
+    vrm.scene.updateMatrixWorld(true);
   }
 
   _animate() {

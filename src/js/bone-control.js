@@ -798,6 +798,7 @@ export class BoneController {
     );
     this._vrm.scene.position.addScaledVector(right, dx * unitsPerPixel);
     this._vrm.scene.position.addScaledVector(up, -dy * unitsPerPixel);
+    this._vrm.scene.userData.groundLift = 0; // 手で動かした位置を新しい基準にする(地面の持ち上げ量は捨てる)
   }
 
   /** ボーンのギズモのドラッグ開始。回転軸は操作対象ボーンの親の座標系の軸(getGizmoWorldAxis)。 */

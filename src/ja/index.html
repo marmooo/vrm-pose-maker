@@ -179,6 +179,10 @@
             <label class="btn btn-outline-primary" for="tab-material" title="マテリアル">
               <svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#palette2"/></svg>
             </label>
+            <input type="radio" class="btn-check" name="right-panel-tab" id="tab-collision" autocomplete="off">
+            <label class="btn btn-outline-primary" for="tab-collision" title="衝突">
+              <svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#bounding-box-circles"/></svg>
+            </label>
             <input type="radio" class="btn-check" name="right-panel-tab" id="tab-scene" autocomplete="off">
             <label class="btn btn-outline-primary" for="tab-scene" title="背景・ライト">
               <svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#image"/></svg>
@@ -315,6 +319,50 @@
           </div>
         </div>
 
+        <!-- 衝突 タブ -->
+        <div id="panel-tab-collision" class="d-none flex-column flex-grow-1 overflow-hidden">
+          <div class="p-2 border-bottom border-secondary">
+            <div class="small fw-bold text-secondary"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#bounding-box-circles"/></svg>衝突</div>
+          </div>
+          <div class="flex-grow-1 overflow-auto p-2">
+            <div class="form-check form-switch mb-3" title="体のどこか(立っていれば足裏、座っていればお尻、寝ていれば背中など)が床(y=0)にめり込むときだけ、その分モデルを持ち上げます。空中に浮いている分には何もしません。ポーズを戻して不要になれば持ち上げも自動で戻ります。髪やスカートなど揺れ物は数えません。">
+              <input class="form-check-input" type="checkbox" role="switch" id="collision-ground">
+              <label class="form-check-label small" for="collision-ground">地面にめり込まない</label>
+            </div>
+            <hr class="border-secondary">
+            <div class="small fw-bold text-secondary mb-2">揺れ物の突き抜け軽減</div>
+            <div class="mb-1">
+              <div class="d-flex justify-content-between small text-secondary" title="スカートの布を、脚・お尻・手の外へ押し出して、太ももが突き出して見えるのを減らします(スカートのように腰から下がる布だけが対象。肌に密着した服は動きません)。0 で無効(既定)。スカートが脚で切れて見えるときに上げてください。上げすぎると不自然に膨らみます">
+                <label for="physics-collision">スカートの突き抜け軽減</label>
+                <span id="physics-collision-value">0.00</span>
+              </div>
+              <input type="range" class="form-range" id="physics-collision" min="0" max="1.5" step="0.05" value="0">
+            </div>
+            <div class="mb-1">
+              <div class="d-flex justify-content-between small text-secondary" title="髪の毛束が首・肩・胸・腕の肌や服にめり込まないよう、毛束の縁を実際の表面(服を着ていれば服の表面)の外へ押し出します。0 で無効(既定)。1 で縁が表面に触れる位置になるので、まず 1 にしてください。下げると少しめり込みを許し、上げると表面から浮きます">
+                <label for="physics-hair-collision">髪の突き抜け軽減</label>
+                <span id="physics-hair-collision-value">0.00</span>
+              </div>
+              <input type="range" class="form-range" id="physics-hair-collision" min="0" max="1.5" step="0.05" value="0">
+            </div>
+            <div class="mb-2" title="選んだ部位の揺れ物にだけ、服の表面に沿った小さな球を敷き詰めて、服にめり込みにくくします。髪の突き抜け軽減より軽く、それが 0 のときに効きます。">
+              <div class="small mb-1">厳密な当たり判定</div>
+              <div class="form-check form-check-inline form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" id="physics-strict-hair">
+                <label class="form-check-label small" for="physics-strict-hair">髪</label>
+              </div>
+              <div class="form-check form-check-inline form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" id="physics-strict-skirt">
+                <label class="form-check-label small" for="physics-strict-skirt">スカート</label>
+              </div>
+              <div class="form-check form-check-inline form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" id="physics-strict-other">
+                <label class="form-check-label small" for="physics-strict-other">その他</label>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- 背景 タブ -->
         <div id="panel-tab-scene" class="d-none flex-column flex-grow-1 overflow-hidden">
           <div class="p-2 border-bottom border-secondary">
@@ -393,36 +441,6 @@
               </div>
               <input type="range" class="form-range" id="wind-gust" min="0" max="1" step="0.05" value="0.5">
             </div>
-            <div class="mb-1">
-              <div class="d-flex justify-content-between small text-secondary" title="スカートの布を、脚・お尻・手の外へ押し出して、太ももが突き出して見えるのを減らします(スカートのように腰から下がる布だけが対象。肌に密着した服は動きません)。0 で無効(既定)。スカートが脚で切れて見えるときに上げてください。上げすぎると不自然に膨らみます">
-                <label for="physics-collision">スカートの突き抜け軽減</label>
-                <span id="physics-collision-value">0.00</span>
-              </div>
-              <input type="range" class="form-range" id="physics-collision" min="0" max="1.5" step="0.05" value="0">
-            </div>
-            <div class="mb-1">
-              <div class="d-flex justify-content-between small text-secondary" title="髪の毛束が首・肩・胸・腕の肌や服にめり込まないよう、毛束の縁を実際の表面(服を着ていれば服の表面)の外へ押し出します。0 で無効(既定)。1 で縁が表面に触れる位置になるので、まず 1 にしてください。下げると少しめり込みを許し、上げると表面から浮きます">
-                <label for="physics-hair-collision">髪の突き抜け軽減</label>
-                <span id="physics-hair-collision-value">0.00</span>
-              </div>
-              <input type="range" class="form-range" id="physics-hair-collision" min="0" max="1.5" step="0.05" value="0">
-            </div>
-            <div class="mb-2" title="選んだ部位の揺れ物にだけ、服の表面に沿った小さな球を敷き詰めて、服にめり込みにくくします。髪の突き抜け軽減より軽く、それが 0 のときに効きます。">
-              <div class="small mb-1">厳密な当たり判定</div>
-              <div class="form-check form-check-inline form-switch">
-                <input class="form-check-input" type="checkbox" role="switch" id="physics-strict-hair">
-                <label class="form-check-label small" for="physics-strict-hair">髪</label>
-              </div>
-              <div class="form-check form-check-inline form-switch">
-                <input class="form-check-input" type="checkbox" role="switch" id="physics-strict-skirt">
-                <label class="form-check-label small" for="physics-strict-skirt">スカート</label>
-              </div>
-              <div class="form-check form-check-inline form-switch">
-                <input class="form-check-input" type="checkbox" role="switch" id="physics-strict-other">
-                <label class="form-check-label small" for="physics-strict-other">その他</label>
-              </div>
-            </div>
-            <div class="mb-2"></div>
             <button type="button" id="btn-settle-physics" class="btn btn-sm btn-outline-body w-100 mb-3" title="今のポーズで、髪や服を数秒かけて落ち着かせます(ポーズを大きく変えたあと、撮影の前に使います)">髪・服を落ち着かせる</button>
             <hr class="border-secondary">
             <div class="small fw-bold text-secondary mb-2"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#lightbulb"/></svg>ライト</div>

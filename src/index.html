@@ -179,6 +179,10 @@
             <label class="btn btn-outline-primary" for="tab-material" title="Materials">
               <svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#palette2"/></svg>
             </label>
+            <input type="radio" class="btn-check" name="right-panel-tab" id="tab-collision" autocomplete="off">
+            <label class="btn btn-outline-primary" for="tab-collision" title="Collision">
+              <svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#bounding-box-circles"/></svg>
+            </label>
             <input type="radio" class="btn-check" name="right-panel-tab" id="tab-scene" autocomplete="off">
             <label class="btn btn-outline-primary" for="tab-scene" title="Background & lights">
               <svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#image"/></svg>
@@ -315,6 +319,50 @@
           </div>
         </div>
 
+        <!-- 衝突 タブ -->
+        <div id="panel-tab-collision" class="d-none flex-column flex-grow-1 overflow-hidden">
+          <div class="p-2 border-bottom border-secondary">
+            <div class="small fw-bold text-secondary"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#bounding-box-circles"/></svg>Collision</div>
+          </div>
+          <div class="flex-grow-1 overflow-auto p-2">
+            <div class="form-check form-switch mb-3" title="Lifts the model when any part of its body (the soles when standing, the hips when sitting, the back when lying down...) would sink below the floor (y=0). Floating in the air is left alone, and the lift is released when the pose no longer needs it. Hair and skirts that sway are not counted.">
+              <input class="form-check-input" type="checkbox" role="switch" id="collision-ground">
+              <label class="form-check-label small" for="collision-ground">Keep above the ground</label>
+            </div>
+            <hr class="border-secondary">
+            <div class="small fw-bold text-secondary mb-2">Hair & clothes clipping</div>
+            <div class="mb-1">
+              <div class="d-flex justify-content-between small text-secondary" title="Pushes skirt cloth out of the legs, hips and hands so thighs don't poke through it (only cloth hanging from the waist, like skirts; tight clothes are left alone). 0 = off (default). Raise it if the skirt looks cut by the legs; too high makes it bulge.">
+                <label for="physics-collision">Skirt clipping fix</label>
+                <span id="physics-collision-value">0.00</span>
+              </div>
+              <input type="range" class="form-range" id="physics-collision" min="0" max="1.5" step="0.05" value="0">
+            </div>
+            <div class="mb-1">
+              <div class="d-flex justify-content-between small text-secondary" title="Pushes the edges of hair strands out of the actual surface (clothes included) of the neck, shoulders, chest and arms so they don't sink in. 0 = off (default). At 1 the strand edges just touch the surface, so start there. Lower allows a little sinking; higher floats the hair off the surface.">
+                <label for="physics-hair-collision">Hair clipping fix</label>
+                <span id="physics-hair-collision-value">0.00</span>
+              </div>
+              <input type="range" class="form-range" id="physics-hair-collision" min="0" max="1.5" step="0.05" value="0">
+            </div>
+            <div class="mb-2" title="Lays small spheres along the clothes surface, only for the swaying parts of the selected area, so they sink into clothes less. Lighter than Hair clipping fix, and applies while it is 0.">
+              <div class="small mb-1">Strict collision</div>
+              <div class="form-check form-check-inline form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" id="physics-strict-hair">
+                <label class="form-check-label small" for="physics-strict-hair">Hair</label>
+              </div>
+              <div class="form-check form-check-inline form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" id="physics-strict-skirt">
+                <label class="form-check-label small" for="physics-strict-skirt">Skirt</label>
+              </div>
+              <div class="form-check form-check-inline form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" id="physics-strict-other">
+                <label class="form-check-label small" for="physics-strict-other">Other</label>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Background tab -->
         <div id="panel-tab-scene" class="d-none flex-column flex-grow-1 overflow-hidden">
           <div class="p-2 border-bottom border-secondary">
@@ -393,36 +441,6 @@
               </div>
               <input type="range" class="form-range" id="wind-gust" min="0" max="1" step="0.05" value="0.5">
             </div>
-            <div class="mb-1">
-              <div class="d-flex justify-content-between small text-secondary" title="Pushes skirt cloth out of the legs, hips and hands so thighs don't poke through it (only cloth hanging from the waist, like skirts; tight clothes are left alone). 0 = off (default). Raise it if the skirt looks cut by the legs; too high makes it bulge.">
-                <label for="physics-collision">Skirt clipping fix</label>
-                <span id="physics-collision-value">0.00</span>
-              </div>
-              <input type="range" class="form-range" id="physics-collision" min="0" max="1.5" step="0.05" value="0">
-            </div>
-            <div class="mb-1">
-              <div class="d-flex justify-content-between small text-secondary" title="Pushes the edges of hair strands out of the actual surface (clothes included) of the neck, shoulders, chest and arms so they don't sink in. 0 = off (default). At 1 the strand edges just touch the surface, so start there. Lower allows a little sinking; higher floats the hair off the surface.">
-                <label for="physics-hair-collision">Hair clipping fix</label>
-                <span id="physics-hair-collision-value">0.00</span>
-              </div>
-              <input type="range" class="form-range" id="physics-hair-collision" min="0" max="1.5" step="0.05" value="0">
-            </div>
-            <div class="mb-2" title="Lays small spheres along the clothes surface, only for the swaying parts of the selected area, so they sink into clothes less. Lighter than Hair clipping fix, and applies while it is 0.">
-              <div class="small mb-1">Strict collision</div>
-              <div class="form-check form-check-inline form-switch">
-                <input class="form-check-input" type="checkbox" role="switch" id="physics-strict-hair">
-                <label class="form-check-label small" for="physics-strict-hair">Hair</label>
-              </div>
-              <div class="form-check form-check-inline form-switch">
-                <input class="form-check-input" type="checkbox" role="switch" id="physics-strict-skirt">
-                <label class="form-check-label small" for="physics-strict-skirt">Skirt</label>
-              </div>
-              <div class="form-check form-check-inline form-switch">
-                <input class="form-check-input" type="checkbox" role="switch" id="physics-strict-other">
-                <label class="form-check-label small" for="physics-strict-other">Other</label>
-              </div>
-            </div>
-            <div class="mb-2"></div>
             <button type="button" id="btn-settle-physics" class="btn btn-sm btn-outline-body w-100 mb-3" title="Let hair and clothes settle for a few seconds in the current pose (use it after changing the pose a lot, before a screenshot)">Settle hair & clothes</button>
             <hr class="border-secondary">
             <div class="small fw-bold text-secondary mb-2"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#lightbulb"/></svg>Lights</div>

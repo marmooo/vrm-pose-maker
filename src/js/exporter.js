@@ -212,6 +212,7 @@ export class Exporter {
           quaternion: vrm.scene.quaternion.toArray(),
           scale: vrm.scene.scale.toArray(),
         },
+        groundLift: vrm.scene.userData.groundLift ?? 0,
         pose: Exporter._pose(vrm),
         expressions: Object.fromEntries(
           getExpressionNames(vrm).map(

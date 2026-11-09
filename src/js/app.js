@@ -255,6 +255,7 @@ class App {
       { radio: "tab-bone", panel: "panel-tab-bone" },
       { radio: "tab-expression", panel: "panel-tab-expression" },
       { radio: "tab-material", panel: "panel-tab-material" },
+      { radio: "tab-collision", panel: "panel-tab-collision" },
       { radio: "tab-scene", panel: "panel-tab-scene" },
     ];
     for (const { radio, panel } of tabDefs) {
@@ -346,6 +347,10 @@ class App {
         this._scene.setPhysics({ gravity: DEFAULT_PHYSICS_GRAVITY });
         this._syncPhysicsUi();
       },
+    );
+    document.getElementById("collision-ground")?.addEventListener(
+      "change",
+      (e) => this._scene.setGroundContact(e.target.checked),
     );
     document.getElementById("physics-collision")?.addEventListener(
       "input",
@@ -518,6 +523,7 @@ class App {
         },
         gridVisible: this._scene._grid.visible,
         physics: this._scene.getPhysics(),
+        groundContact: this._scene.getGroundContact(),
         camera: {
           position: this._scene.camera.position.toArray(),
           quaternion: this._scene.camera.quaternion.toArray(),
@@ -644,6 +650,10 @@ class App {
       }
       this._scene.setVrms(this._models.map((item) => item.vrm));
       this._restorePhysics(project.scene?.physics);
+      this._scene.setGroundContact(
+        project.scene?.groundContact ?? project.scene?.footGround ?? false, // footGround は途中の版の名前
+      );
+      this._syncGroundContactUi();
       // 切り替え用アイコン(顔のサムネイル)は保存されていないので、読み込んだ状態から撮り直す
       for (const item of this._models) {
         item.thumbnail = this._scene.captureFaceThumbnail(item.vrm);
@@ -851,6 +861,11 @@ class App {
         this._showToast(tr("app.015", applied), "secondary");
       }
     }
+  }
+
+  _syncGroundContactUi() {
+    const toggle = document.getElementById("collision-ground");
+    if (toggle) toggle.checked = this._scene.getGroundContact();
   }
 
   /** 物理の設定(ON/OFF・重力)を画面の入力欄に反映する。 */
@@ -2383,6 +2398,7 @@ class App {
       vrm.scene.quaternion.fromArray(model.transform.quaternion);
       vrm.scene.scale.fromArray(model.transform.scale);
     }
+    vrm.scene.userData.groundLift = model.groundLift ?? 0;
     for (const [name, pose] of Object.entries(model.pose || {})) {
       const bone = vrm.humanoid.getNormalizedBoneNode(name);
       if (bone) {
