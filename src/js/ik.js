@@ -87,6 +87,43 @@ export const SURFACE_OFFSET = 0.0005;
 const PALM_DEPTH = 0.03;
 /** 手のひらの法線(手のボーンのローカル座標)。T ポーズで両手とも下向き */
 const PALM_NORMAL = new THREE.Vector3(0, -1, 0);
+const BACK_NORMAL = new THREE.Vector3(0, 1, 0);
+
+/**
+ * 面に触れさせる手の部位。at: 手首から中指の付け根までを 1 としたときの、手首側からの位置、radius: 同じ長さに対する、触れる範囲の半径、
+ * normal: その部位が向く方向(手のボーンのローカル座標)。
+ * center は剣を握るときなど、heel(掌底)は打撃のように手のひらの下側を当てるとき、back は手の甲で触れるとき。
+ */
+export const HAND_PARTS = {
+  center: { at: 0.6, radius: 0.25, normal: PALM_NORMAL },
+  heel: { at: 0.2, radius: 0.3, normal: PALM_NORMAL },
+  back: { at: 0.5, radius: 0.5, normal: BACK_NORMAL },
+  // 指先(の腹)で触れる。接触は指ごとの頂点で決めるので、at・radius・normal は手の基準点と向きだけに使う
+  fingers: { at: 0.6, radius: 0.25, normal: PALM_NORMAL },
+};
+
+/** 指の番号(1〜5)の順。UI の 1〜5 に対応する */
+export const FINGER_KEYS = ["Thumb", "Index", "Middle", "Ring", "Little"];
+/** 指ごとの関節(ボーン名の側より後ろの部分)と、解く軸の重み。曲げの軸だけを使う(親指は 2 軸が連動する) */
+const FINGER_JOINTS = {
+  Thumb: [
+    ["ThumbMetacarpal", { x: 0.4, y: 0.2, z: 0.4 }],
+    ["ThumbProximal", { x: 0.5, z: 0.5 }],
+    ["ThumbDistal", { x: 0.5, z: 0.5 }],
+  ],
+  ...Object.fromEntries(
+    ["Index", "Middle", "Ring", "Little"].map((f) => [f, [
+      [`${f}Proximal`, { z: 1 }],
+      [`${f}Intermediate`, { z: 1 }],
+      [`${f}Distal`, { z: 1 }],
+    ]]),
+  ),
+};
+const FINGER_TILT = 0.5; // 指で触れるとき、手を面に対して傾ける量(rad)。指先から面に当たるように、手首を浮かせる
+const FINGER_POINTS_MAX = 40; // 指の骨 1 本あたりの、接触の判定に使う頂点の数
+const AVOID_WEIGHT = 0.6; // 触れない指を、面から逃がすための曲げやすさ(触れる指を 1 として)
+const AVOID_MARGIN = 0.002; // 触れない指を、面からこれだけ離しておく(m)
+const CURL_RATIO = 0.6; // 触れない指を、可動域のどこまで曲げておくか
 
 const MAX_ITERATIONS = 24;
 const STALL_LIMIT = 3; // 誤差がほとんど減らない反復がこれだけ続いたら、打ち切る(届かないとき、毎フレーム回し切らないため)
@@ -145,7 +182,7 @@ const HAND_SUPPORT_MAX = 160;
  * 手のひらと指の付け根までを使う(指先は、曲がっていても面に食い込ませる)。
  * @returns {Float32Array|null} 3 つずつ並べた座標
  */
-export function collectHandPoints(vrm, chainName) {
+export function collectHandPoints(vrm, chainName, part = "center") {
   const spec = IK_CHAINS[chainName];
   if (!spec?.palm) return null;
   const end = vrm.humanoid.getNormalizedBoneNode(spec.end);
@@ -183,21 +220,40 @@ export function collectHandPoints(vrm, chainName) {
     }
   });
   if (!pts.length) return null;
-  // 手のひら側(PALM_NORMAL 方向)の端に近い頂点だけを残す
+  // 触れる部位のまわり(手首から中指の付け根へ向かう線上の点を中心に、手の大きさに比例した半径)の頂点だけに絞る
+  const def = HAND_PARTS[part] ?? HAND_PARTS.center;
+  const n = def.normal;
+  const finger = vrm.humanoid.getNormalizedBoneNode(spec.palm.child)?.position;
+  let region = pts;
+  if (finger) {
+    const len = finger.length();
+    const ax = finger.x * def.at,
+      ay = finger.y * def.at,
+      az = finger.z * def.at;
+    const r = def.radius * len;
+    const inRegion = [];
+    for (let i = 0; i < pts.length; i += 3) {
+      const rx = pts[i] - ax, ry = pts[i + 1] - ay, rz = pts[i + 2] - az;
+      const d = rx * n.x + ry * n.y + rz * n.z;
+      if (Math.hypot(rx - d * n.x, ry - d * n.y, rz - d * n.z) <= r) {
+        inRegion.push(pts[i], pts[i + 1], pts[i + 2]);
+      }
+    }
+    if (inRegion.length) region = inRegion;
+  }
+  // その部位の面側(部位の向き)の端に近い頂点だけを残す
   let maxD = -Infinity;
-  for (let i = 0; i < pts.length; i += 3) {
+  for (let i = 0; i < region.length; i += 3) {
     maxD = Math.max(
       maxD,
-      pts[i] * PALM_NORMAL.x + pts[i + 1] * PALM_NORMAL.y +
-        pts[i + 2] * PALM_NORMAL.z,
+      region[i] * n.x + region[i + 1] * n.y + region[i + 2] * n.z,
     );
   }
   const kept = [];
-  for (let i = 0; i < pts.length; i += 3) {
-    const d = pts[i] * PALM_NORMAL.x + pts[i + 1] * PALM_NORMAL.y +
-      pts[i + 2] * PALM_NORMAL.z;
+  for (let i = 0; i < region.length; i += 3) {
+    const d = region[i] * n.x + region[i + 1] * n.y + region[i + 2] * n.z;
     if (d >= maxD - HAND_SUPPORT_BAND) {
-      kept.push(pts[i], pts[i + 1], pts[i + 2]);
+      kept.push(region[i], region[i + 1], region[i + 2]);
     }
   }
   const step = Math.max(1, Math.ceil(kept.length / 3 / HAND_SUPPORT_MAX));
@@ -208,6 +264,68 @@ export function collectHandPoints(vrm, chainName) {
   return Float32Array.from(out);
 }
 
+/**
+ * 指ごとの頂点を、指の骨の座標で集める(指を曲げても、頂点は骨についていく)。
+ * @param {string[]} keys FINGER_KEYS のうち、集める指
+ * @returns {Object<string, {node: THREE.Object3D, pts: Float32Array}[]>|null} 指 → 骨ごとの頂点
+ */
+export function collectFingerPoints(vrm, chainName, keys) {
+  const spec = IK_CHAINS[chainName];
+  if (!spec?.palm) return null;
+  vrm.humanoid.update?.();
+  vrm.scene.updateMatrixWorld(true);
+  const sets = {};
+  const byRaw = new Map(); // 生ボーン → { node, list }
+  for (const key of keys) {
+    sets[key] = [];
+    for (const [name] of FINGER_JOINTS[key] ?? []) {
+      const raw = vrm.humanoid.getRawBoneNode(`${spec.side}${name}`);
+      const node = vrm.humanoid.getNormalizedBoneNode(`${spec.side}${name}`);
+      if (!raw || !node) continue;
+      const entry = { node, list: [], inv: node.matrixWorld.clone().invert() };
+      byRaw.set(raw, entry);
+      sets[key].push(entry);
+    }
+  }
+  const p = new THREE.Vector3();
+  vrm.scene.traverse((o) => {
+    if (!o.isSkinnedMesh) return;
+    o.skeleton.update();
+    const si = o.geometry.attributes.skinIndex,
+      sw = o.geometry.attributes.skinWeight;
+    if (!si || !sw) return;
+    for (let i = 0; i < si.count; i++) {
+      let best = 0, bw = -1;
+      for (let k = 0; k < 4; k++) {
+        const w = sw.getComponent(i, k);
+        if (w > bw) {
+          bw = w;
+          best = si.getComponent(i, k);
+        }
+      }
+      const entry = byRaw.get(o.skeleton.bones[best]);
+      if (!entry) continue;
+      o.getVertexPosition(i, p).applyMatrix4(o.matrixWorld).applyMatrix4(
+        entry.inv,
+      );
+      entry.list.push(p.x, p.y, p.z);
+    }
+  });
+  const result = {};
+  for (const key of keys) {
+    result[key] = sets[key].map(({ node, list }) => {
+      const step = Math.max(1, Math.ceil(list.length / 3 / FINGER_POINTS_MAX));
+      const pts = [];
+      for (let i = 0; i < list.length; i += 3 * step) {
+        pts.push(list[i], list[i + 1], list[i + 2]);
+      }
+      return { node, pts: Float32Array.from(pts) };
+    }).filter((e) => e.pts.length);
+    if (!result[key].length) delete result[key];
+  }
+  return Object.keys(result).length ? result : null;
+}
+
 /** 自分の側の腕(肩・腕・手)か。自分の腕の当たり判定は、体の判定から外す */
 function isOwnPart(name, side) {
   return name.startsWith(side) &&
@@ -215,17 +333,20 @@ function isOwnPart(name, side) {
 }
 
 /** 1 つの鎖の、先端(手のひら)まわりの情報を用意する */
-function prepareEnd(vrm, chainName, end, handPoints) {
+function prepareEnd(vrm, chainName, end, handPoints, part = "center") {
   const spec = IK_CHAINS[chainName];
   const palmLocal = new THREE.Vector3();
   const fingerLocal = new THREE.Vector3(1, 0, 0);
+  const normalLocal = (HAND_PARTS[part] ?? HAND_PARTS.center).normal;
   if (spec.palm) {
     const child = vrm.humanoid.getNormalizedBoneNode(spec.palm.child);
     if (child) {
-      palmLocal.copy(child.position).multiplyScalar(0.55);
+      palmLocal.copy(child.position).multiplyScalar(
+        (HAND_PARTS[part] ?? HAND_PARTS.center).at,
+      );
       fingerLocal.copy(child.position).normalize();
     }
-    palmLocal.addScaledVector(PALM_NORMAL, PALM_DEPTH);
+    palmLocal.addScaledVector(normalLocal, PALM_DEPTH);
   }
   // 体に当たらないか調べる点(腕の骨に沿った球)。ボーン座標で持つ
   const samples = [];
@@ -262,6 +383,7 @@ function prepareEnd(vrm, chainName, end, handPoints) {
     side: spec.side,
     end,
     palmLocal,
+    normalLocal,
     fingerLocal,
     hasPalm: !!spec.palm,
     samples,
@@ -315,7 +437,82 @@ function prepare(vrm, goals, bodySurface = null) {
       });
     }
     if (!last) return null;
-    chains.push(prepareEnd(vrm, goal.chain, last, goal.handPoints ?? null));
+    const chainEnd = prepareEnd(
+      vrm,
+      goal.chain,
+      last,
+      goal.handPoints ?? null,
+      goal.part ?? "center",
+    );
+    // 指で触れるときは、触れる指の関節も解く。接触は、指の骨についた頂点のうち、いちばん面に近いもので決める
+    if (goal.part === "fingers" && goal.fingerPoints) {
+      chainEnd.fingerSets = [];
+      for (const key of goal.fingers ?? []) {
+        const set = goal.fingerPoints[key];
+        if (!set) continue;
+        chainEnd.fingerSets.push({ key, parts: set, tip: new THREE.Vector3() });
+        for (const [name, axes] of FINGER_JOINTS[key]) {
+          const bone = `${chainEnd.side}${name}`;
+          const node = vrm.humanoid.getNormalizedBoneNode(bone);
+          if (!node || byBone.has(bone)) continue;
+          const limit = getBoneLimit(bone);
+          const joint = {
+            node,
+            order: limit?.order ?? "XYZ",
+            e: [0, 0, 0],
+            trunk: false,
+          };
+          joint.e = eulerWithinLimit(node.quaternion, joint.order, limit, flip);
+          byBone.set(bone, joint);
+          joints.push(joint);
+          ["x", "y", "z"].forEach((axis, k) => {
+            const w = axes[axis];
+            if (!w) return;
+            const range = limit?.[axis] ?? [-Math.PI, Math.PI];
+            params.push({ joint, k, w, lo: range[0], hi: range[1] });
+          });
+        }
+      }
+      if (!chainEnd.fingerSets.length) chainEnd.fingerSets = null;
+      // 触れない指は、面より下に入らないように、一緒に曲げて逃がす
+      chainEnd.avoidSets = [];
+      for (const key of FINGER_KEYS) {
+        const set = goal.fingerPoints[key];
+        if (!set || (goal.fingers ?? []).includes(key)) continue;
+        chainEnd.avoidSets.push({ key, parts: set, tip: new THREE.Vector3() });
+        for (const [name, axes] of FINGER_JOINTS[key]) {
+          const bone = `${chainEnd.side}${name}`;
+          const node = vrm.humanoid.getNormalizedBoneNode(bone);
+          if (!node || byBone.has(bone)) continue;
+          const limit = getBoneLimit(bone);
+          const joint = {
+            node,
+            order: limit?.order ?? "XYZ",
+            e: [0, 0, 0],
+            trunk: false,
+          };
+          joint.e = eulerWithinLimit(node.quaternion, joint.order, limit, flip);
+          byBone.set(bone, joint);
+          joints.push(joint);
+          ["x", "y", "z"].forEach((axis, k) => {
+            const w = axes[axis];
+            if (!w) return;
+            const range = limit?.[axis] ?? [-Math.PI, Math.PI];
+            params.push({
+              joint,
+              k,
+              w: w * AVOID_WEIGHT,
+              lo: range[0],
+              hi: range[1],
+            });
+          });
+        }
+      }
+      chainEnd.samplePos = new Float64Array(
+        (chainEnd.samples.length + chainEnd.avoidSets.length) * 3,
+      );
+    }
+    chains.push(chainEnd);
   }
   // 体幹の下にあって、解の途中で動く当たり判定のボーン(頭・首・解かない側の腕など)。体幹が曲がったとき、上から順に行列を更新する
   const jointNodes = new Set(joints.map((j) => j.node));
@@ -342,6 +539,25 @@ function prepare(vrm, goals, bodySurface = null) {
   };
 }
 
+/** 指の頂点のうち、法線 cn の方向にいちばん低い(面にいちばん近い)ものを、f.tip に入れる */
+function lowestPoint(f, cn) {
+  let low = Infinity;
+  for (const { node, pts } of f.parts) {
+    const w = node.matrixWorld.elements;
+    for (let i = 0; i < pts.length; i += 3) {
+      const x = pts[i], y = pts[i + 1], z = pts[i + 2];
+      const wx = w[0] * x + w[4] * y + w[8] * z + w[12];
+      const wy = w[1] * x + w[5] * y + w[9] * z + w[13];
+      const wz = w[2] * x + w[6] * y + w[10] * z + w[14];
+      const d = wx * cn.x + wy * cn.y + wz * cn.z;
+      if (d < low) {
+        low = d;
+        f.tip.set(wx, wy, wz);
+      }
+    }
+  }
+}
+
 /** 未知数の値から、関節の回転を決めて、各鎖の先端(手のひら)の位置と向き、腕の点の位置を求める */
 function forward(ctx) {
   for (const j of ctx.joints) {
@@ -353,7 +569,7 @@ function forward(ctx) {
   for (const node of ctx.refresh) node.updateMatrixWorld(false);
   for (const c of ctx.chains) {
     c.P.copy(c.palmLocal).applyMatrix4(c.end.matrixWorld);
-    c.N.copy(PALM_NORMAL).transformDirection(c.end.matrixWorld);
+    c.N.copy(c.normalLocal).transformDirection(c.end.matrixWorld);
     c.F.copy(c.fingerLocal).transformDirection(c.end.matrixWorld);
     c.excess = 0;
     if (c.contactNormal && c.handPoints) {
@@ -380,6 +596,22 @@ function forward(ctx) {
         // 上限を超えた分は、手が面から浮いている(または埋まっている)ことになるので、位置の誤差に足す
         c.excess = Math.max(0, Math.abs(m) - CONTACT_SHIFT_LIMIT);
       }
+    }
+    if (c.fingerSets && c.cn) {
+      // 指ごとに、面にいちばん近い(法線方向にいちばん低い)頂点を、触れる点とする。手の基準点は、その平均
+      c.P.set(0, 0, 0);
+      for (const f of c.fingerSets) {
+        lowestPoint(f, c.cn);
+        c.P.add(f.tip);
+      }
+      c.P.multiplyScalar(1 / c.fingerSets.length);
+      c.avoidSets?.forEach((f, j) => {
+        lowestPoint(f, c.cn);
+        const k = (c.samples.length + j) * 3;
+        c.samplePos[k] = f.tip.x;
+        c.samplePos[k + 1] = f.tip.y;
+        c.samplePos[k + 2] = f.tip.z;
+      });
     }
     for (let k = 0; k < c.samples.length; k++) {
       const sm = c.samples[k];
@@ -426,13 +658,13 @@ function residual(c, target, out) {
 }
 
 /** 今の姿勢での、手のひらの中心と手のひらの向き(世界座標)。確認用 */
-export function getEndPoint(vrm, chainName) {
-  const ctx = prepare(vrm, [{ chain: chainName }]);
+export function getEndPoint(vrm, chainName, part = "center") {
+  const ctx = prepare(vrm, [{ chain: chainName, part }]);
   if (!ctx) return null;
   vrm.scene.updateMatrixWorld(true);
   const c = ctx.chains[0];
   c.P.copy(c.palmLocal).applyMatrix4(c.end.matrixWorld);
-  c.N.copy(PALM_NORMAL).transformDirection(c.end.matrixWorld);
+  c.N.copy(c.normalLocal).transformDirection(c.end.matrixWorld);
   c.F.copy(c.fingerLocal).transformDirection(c.end.matrixWorld);
   return {
     position: c.P.clone(),
@@ -490,6 +722,23 @@ const RELAXED_ROT_SCALE = 0.2;
  */
 function findPenetrations(ctx, bodySurface, out) {
   out.length = 0;
+  // 指で触れるとき、触れない指が面より下に入っていれば、押し戻す(面の外向き cn の方向へ)
+  ctx.chains.forEach((c, ci) => {
+    if (!c.cn || !c.plane) return; // 面が決まっていない(解く前の確認など)ときは、何もしない
+    c.avoidSets?.forEach((f, j) => {
+      const below = _v1.copy(c.plane).sub(f.tip).dot(c.cn) + AVOID_MARGIN;
+      if (below > 0) {
+        out.push({
+          ci,
+          k: c.samples.length + j,
+          depth: below - COLLISION_MARGIN, // あとで COLLISION_MARGIN が足されるので、引いておく
+          dx: c.cn.x,
+          dy: c.cn.y,
+          dz: c.cn.z,
+        });
+      }
+    });
+  });
   if (!bodySurface?.length) return;
   const mats = bodySurface.map((e) =>
     e.node && e.offset
@@ -570,18 +819,24 @@ function solveCore(vrm, goals, bodySurface) {
     if (withRot && g.handPoints) {
       c.contactNormal = g.target.palmNormal.clone().negate();
     }
+    if (c.fingerSets) {
+      c.cn = g.target.surfaceNormal ?? null;
+      c.plane = g.target.position;
+    }
+    if (!c.cn) c.fingerSets = null;
     return {
       position: g.target.position,
       palmNormal: withRot ? g.target.palmNormal : null,
       fingerDir: withRot ? g.target.fingerDir ?? null : null,
       rows: withRot ? 6 : 3,
+      extra: c.fingerSets?.length ?? 0, // 指の先ごとに、面に乗せる行を 1 つ足す
     };
   });
   const baseOffset = [];
   let baseRows = 0;
   for (const t of ts) {
     baseOffset.push(baseRows);
-    baseRows += t.rows;
+    baseRows += t.rows + t.extra;
   }
   const { params } = ctx;
   const n = params.length;
@@ -594,17 +849,25 @@ function solveCore(vrm, goals, bodySurface) {
       N: c.N.clone(),
       F: c.F.clone(),
       S: Float64Array.from(c.samplePos),
+      T: c.fingerSets?.map((f) => f.tip.clone()),
     }));
 
   /** 鎖ごとの誤差と、全体の損失 */
   const evaluate = () => {
     const per = ts.map((t, i) => {
       residual(ctx.chains[i], t, _r);
-      const posErr = Math.hypot(_r[0], _r[1], _r[2]) + ctx.chains[i].excess;
+      let posErr = Math.hypot(_r[0], _r[1], _r[2]) + ctx.chains[i].excess;
       const rotErr = t.rows === 6
         ? Math.hypot(_r[3], _r[4], _r[5]) / (ROT_WEIGHT * rotScale)
         : 0;
-      return { posErr, rotErr, r: _r.slice(0, t.rows) };
+      const r = _r.slice(0, t.rows);
+      // 指の先を、面(目標の点を通る、法線 cn の平面)に乗せる
+      ctx.chains[i].fingerSets?.forEach((f) => {
+        const g = _v1.copy(f.tip).sub(t.position).dot(ctx.chains[i].cn);
+        r.push(-g);
+        posErr += Math.abs(g);
+      });
+      return { posErr, rotErr, r };
     });
     findPenetrations(ctx, bodySurface, _hits);
     const maxDepth = _hits.reduce((m, h) => Math.max(m, h.depth), 0); // 入り込みの最大(帯の中は 0)
@@ -665,6 +928,11 @@ function solveCore(vrm, goals, bodySurface) {
           J[o][c] = (ch.P.x - b.P.x) / FD_DELTA;
           J[o + 1][c] = (ch.P.y - b.P.y) / FD_DELTA;
           J[o + 2][c] = (ch.P.z - b.P.z) / FD_DELTA;
+          ch.fingerSets?.forEach((f, fi) => {
+            J[o + ts[i].rows + fi][c] =
+              _v1.copy(f.tip).sub(b.T[fi]).dot(ch.cn) /
+              FD_DELTA;
+          });
           if (ts[i].rows === 6) {
             // 向きの変化は、手のひらの向き N の変化 dN から、N × dN(N に直交する回転ベクトル)で表す
             _v1.copy(ch.N).sub(b.N);
@@ -829,10 +1097,11 @@ export function solveChain(
   target,
   bodySurface = null,
   handPoints = null,
+  part = "center",
 ) {
   return solveChains(
     vrm,
-    [{ chain: chainName, target, handPoints }],
+    [{ chain: chainName, target, handPoints, part }],
     bodySurface,
   )?.[0] ?? null;
 }
@@ -935,6 +1204,10 @@ export class IkManager {
         roll: 0,
         manualRoll: false, // 手のひらの回転を自分で決めたか(まだなら、いちばん無理のない向きを自動で選ぶ)
         handPoints: null, // 手のメッシュの接触用の点(最初に解くときに集める)
+        part: "center", // 面に触れさせる手の部位(HAND_PARTS)
+        fingers: ["Index"], // part が "fingers" のとき、触れる指(FINGER_KEYS)
+        fingerPoints: null, // 指ごとの接触用の頂点
+        fingerBackup: null, // 指で触れる前の、指の姿勢(部位を戻すときに戻す)
         enabled: true,
         marker: this._makeMarker(chain),
       };
@@ -944,7 +1217,13 @@ export class IkManager {
     this._setNormal(e, normal);
     e.roll = extra.roll ?? 0;
     e.manualRoll = extra.manualRoll ?? false;
+    if (HAND_PARTS[extra.part]) e.part = extra.part;
+    if (Array.isArray(extra.fingers)) {
+      const keys = FINGER_KEYS.filter((k) => extra.fingers.includes(k));
+      if (keys.length) e.fingers = keys;
+    }
     e.handPoints = null;
+    e.fingerPoints = null;
     // 指の向き(ロール)は、離して確定するまで決めない(それまでは、その手の届きやすい向きに任せる)
     e.fingerBase = e.normal && extra.fingerBase
       ? extra.fingerBase.clone()
@@ -1048,8 +1327,78 @@ export class IkManager {
   endFollow(vrm, chain) {
     const e = this._chains(vrm)?.[chain];
     if (!e) return;
-    e.handPoints = collectHandPoints(vrm, chain);
+    this._collectPoints(vrm, chain, e);
     if (e.normal && !e.manualRoll) this.autoRoll(vrm, chain);
+  }
+
+  /** 接触用の頂点を、今の姿勢で集め直す(部位に合わせて、手のひら側か、指ごと) */
+  _collectPoints(vrm, chain, e) {
+    if (e.part === "fingers") {
+      e.fingerPoints = collectFingerPoints(vrm, chain, FINGER_KEYS);
+    } else {
+      e.handPoints = collectHandPoints(vrm, chain, e.part);
+    }
+  }
+
+  /** 接触用の頂点が無ければ集める */
+  _ensurePoints(vrm, chain, e) {
+    if (e.part === "fingers") {
+      e.fingerPoints ??= collectFingerPoints(vrm, chain, FINGER_KEYS);
+    } else {
+      e.handPoints ??= collectHandPoints(vrm, chain, e.part);
+    }
+  }
+
+  /** 触れる指のボーン名(解くときに、姿勢を保存・復元する対象) */
+  _fingerBoneNames(chain, e) {
+    if (e.part !== "fingers") return [];
+    const side = IK_CHAINS[chain].side;
+    return FINGER_KEYS.flatMap((k) =>
+      FINGER_JOINTS[k].map(([n]) => `${side}${n}`)
+    );
+  }
+
+  /**
+   * 指で触れるための指の準備。触れる指はまっすぐに伸ばし(そこから曲げて面に合わせる)、触れない指(親指以外)は軽く曲げておく。
+   * 元の指の姿勢は、部位を戻すときのために覚えておく
+   */
+  _prepareFingers(vrm, chain, e) {
+    const side = IK_CHAINS[chain].side;
+    const flip = vrm.meta?.metaVersion === "0" ? -1 : 1;
+    e.fingerBackup ??= new Map(
+      FINGER_KEYS.flatMap((k) =>
+        FINGER_JOINTS[k].map(([n]) => {
+          const node = vrm.humanoid.getNormalizedBoneNode(`${side}${n}`);
+          return node ? [node, node.quaternion.clone()] : null;
+        }).filter(Boolean)
+      ),
+    );
+    for (const key of FINGER_KEYS) {
+      const touching = e.fingers.includes(key);
+      for (const [name] of FINGER_JOINTS[key]) {
+        const node = vrm.humanoid.getNormalizedBoneNode(`${side}${name}`);
+        if (!node) continue;
+        if (touching) {
+          node.quaternion.identity();
+        } else if (key !== "Thumb") {
+          const limit = getBoneLimit(`${side}${name}`);
+          const [lo, hi] = limit?.z ?? [0, 0];
+          const flex = Math.abs(lo) > Math.abs(hi) ? lo : hi; // 曲げる側の端
+          node.quaternion.setFromEuler(
+            _eul.set(0, 0, flex * CURL_RATIO * flip, limit?.order ?? "XYZ"),
+          );
+        }
+      }
+    }
+    vrm.scene.updateMatrixWorld(true);
+  }
+
+  /** 指で触れる前の指の姿勢に戻す */
+  _restoreFingers(vrm, e) {
+    if (!e.fingerBackup) return;
+    for (const [node, q] of e.fingerBackup) node.quaternion.copy(q);
+    e.fingerBackup = null;
+    vrm.scene.updateMatrixWorld(true);
   }
 
   /**
@@ -1068,6 +1417,10 @@ export class IkManager {
     for (const [c] of others) {
       IK_CHAINS[c].joints.forEach((j) => boneNames.add(j.bone));
     }
+    for (const n of this._fingerBoneNames(chain, e)) boneNames.add(n);
+    for (const [c, o] of others) {
+      for (const n of this._fingerBoneNames(c, o)) boneNames.add(n);
+    }
     const nodes = [...boneNames].map((b) =>
       vrm.humanoid.getNormalizedBoneNode(b)
     ).filter(Boolean);
@@ -1081,7 +1434,7 @@ export class IkManager {
     vrm.scene.updateMatrixWorld(true);
     const base = this._canonicalBase(vrm, e.normal);
     const palmNormal = e.normal.clone().negate();
-    for (const [c, o] of others) o.handPoints ??= collectHandPoints(vrm, c);
+    for (const [c, o] of others) this._ensurePoints(vrm, c, o);
 
     // 向きを 30° ごとに試す。seed は解の出発点: 'current' は今の姿勢、'rest' は腕を初期姿勢に戻す、
     // 'via' は初期姿勢から、いったん目標の手前(面の外側)へ手を持っていってから目標へ向かう(頭の上など、まっすぐ解くと腕がはまる所用)
@@ -1097,9 +1450,8 @@ export class IkManager {
         vrm.scene.updateMatrixWorld(true);
         const goals = [
           {
-            chain,
-            target: { position: e.target, palmNormal, fingerDir },
-            handPoints: e.handPoints,
+            ...this._goal(chain, e),
+            target: this._target(e, fingerDir),
           },
           ...others.map(([c, o]) => this._goal(c, o)),
         ];
@@ -1158,13 +1510,33 @@ export class IkManager {
     return {
       chain,
       handPoints: e.handPoints,
-      target: {
-        position: e.target,
-        palmNormal: e.normal ? e.normal.clone().negate() : null,
-        // 手のひらを面に向けたまま、指を面の上でどちらへ向けるか(ロール)
-        fingerDir: this._fingerDir(e),
-      },
+      part: e.part,
+      fingers: e.fingers,
+      fingerPoints: e.fingerPoints,
+      // 手のひらを面に向けたまま、指を面の上でどちらへ向けるか(ロール)
+      target: this._target(e, this._fingerDir(e)),
     };
+  }
+
+  /**
+   * 手のひらの向きと指の向きの目標。指の向き flat は、面の上での向き。
+   * 指で触れるときは、指先から面に当たるように、手を面に対して傾ける(手首が浮く)
+   */
+  _target(e, flat) {
+    const target = {
+      position: e.target,
+      palmNormal: e.normal ? e.normal.clone().negate() : null,
+      fingerDir: flat,
+    };
+    if (e.part === "fingers" && e.normal) target.surfaceNormal = e.normal;
+    if (e.part === "fingers" && e.normal && flat) {
+      const c = Math.cos(FINGER_TILT), s = Math.sin(FINGER_TILT);
+      target.palmNormal = e.normal.clone().multiplyScalar(-c)
+        .addScaledVector(flat, -s);
+      target.fingerDir = flat.clone().multiplyScalar(c)
+        .addScaledVector(e.normal, -s);
+    }
+    return target;
   }
 
   /** ドラッグ中の移動(UI の更新はしない)。normal を渡せば、手のひらの向きも更新する(指の向きの基準は、新しい面へ落とし直す) */
@@ -1186,11 +1558,38 @@ export class IkManager {
     this._updateArrows(e);
   }
 
+  /** 面に触れさせる手の部位を変える(HAND_PARTS のキー)。接触の点を取り直して、向きを選び直す */
+  setPart(vrm, chain, part) {
+    const e = this._chains(vrm)?.[chain];
+    if (!e || !HAND_PARTS[part] || e.part === part) return;
+    const was = e.part;
+    e.part = part;
+    if (part === "fingers") this._prepareFingers(vrm, chain, e);
+    else if (was === "fingers") this._restoreFingers(vrm, e);
+    this.endFollow(vrm, chain);
+    this._callbacks.onChange?.();
+  }
+
+  /** 指で触れるときの、触れる指を決める(FINGER_KEYS のうち 1 本以上) */
+  setFingers(vrm, chain, keys) {
+    const e = this._chains(vrm)?.[chain];
+    const next = FINGER_KEYS.filter((k) => keys.includes(k));
+    if (!e || !next.length || next.join() === e.fingers.join()) return;
+    e.fingers = next;
+    if (e.part === "fingers") {
+      this._prepareFingers(vrm, chain, e);
+      this.endFollow(vrm, chain);
+    }
+    this._callbacks.onChange?.();
+  }
+
   getTarget(vrm, chain) {
     const e = this._chains(vrm)?.[chain];
     return e
       ? {
         position: e.target,
+        part: e.part,
+        fingers: e.fingers,
         normal: e.normal,
         roll: e.roll,
         fingerBase: e.fingerBase,
@@ -1246,7 +1645,7 @@ export class IkManager {
     vrm.scene.updateMatrixWorld(true);
     const bodySurface = this._callbacks.getBodySurface?.(vrm) ?? null;
     const goals = active.map(([chain, e]) => {
-      e.handPoints ??= collectHandPoints(vrm, chain);
+      this._ensurePoints(vrm, chain, e);
       return this._goal(chain, e);
     });
     const results = solveChains(vrm, goals, bodySurface);
@@ -1277,11 +1676,20 @@ export class IkManager {
       .map((j) => vrm.humanoid.getNormalizedBoneNode(j.bone))
       .filter(Boolean);
     const all = new Set(
-      goals.flatMap((g) =>
-        IK_CHAINS[g.chain].joints.map((j) =>
+      goals.flatMap((g) => [
+        ...IK_CHAINS[g.chain].joints.map((j) =>
           vrm.humanoid.getNormalizedBoneNode(j.bone)
-        )
-      ),
+        ),
+        ...(g.part === "fingers"
+          ? FINGER_KEYS.flatMap((k) =>
+            FINGER_JOINTS[k].map(([n]) =>
+              vrm.humanoid.getNormalizedBoneNode(
+                `${IK_CHAINS[g.chain].side}${n}`,
+              )
+            )
+          )
+          : []),
+      ]),
     );
     const keep = [...all].filter(Boolean);
     const saved = keep.map((n) => n.quaternion.clone());
@@ -1336,6 +1744,8 @@ export class IkManager {
         fingerBase: e.fingerBase?.toArray() ?? null,
         roll: e.roll,
         manualRoll: e.manualRoll,
+        part: e.part,
+        fingers: e.fingers,
         enabled: e.enabled,
       };
     }
@@ -1356,6 +1766,8 @@ export class IkManager {
         {
           roll: e.roll ?? 0,
           manualRoll: !!e.manualRoll,
+          part: e.part,
+          fingers: e.fingers,
           fingerBase: Array.isArray(e.fingerBase)
             ? new THREE.Vector3().fromArray(e.fingerBase)
             : null,

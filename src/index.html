@@ -192,20 +192,25 @@
 
         <!-- Models & poses tab -->
         <div id="panel-tab-model" class="d-none flex-column flex-grow-1 overflow-hidden">
-          <div class="p-2 border-bottom border-secondary">
+          <div class="p-2 border-bottom border-secondary d-flex align-items-center justify-content-between">
             <div class="small fw-bold text-secondary"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#person-arms-up"/></svg>Poses</div>
+            <div class="d-flex gap-1">
+              <button type="button" id="btn-random-animation" class="btn btn-sm btn-outline-secondary" disabled title="Random pose playback" aria-label="Random pose playback">
+                <svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#shuffle"/></svg>
+              </button>
+              <button type="button" id="btn-reset-pose" class="btn btn-sm btn-outline-secondary" disabled title="Reset pose" aria-label="Reset pose">
+                <svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#arrow-counterclockwise"/></svg>
+              </button>
+            </div>
           </div>
           <div class="flex-grow-1 overflow-auto p-2">
             <div class="small text-secondary mb-1">Pose of the selected model</div>
             <div class="d-grid gap-2">
-              <button id="btn-load-pose" class="btn btn-sm btn-outline-warning" disabled title="Load a GLB / FBX / VRMA file. Animations are applied to the selected model; files without a human animation are added as objects"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#upload"/></svg>Load pose</button>
-              <button id="btn-toggle-animation" class="btn btn-sm btn-outline-info" disabled><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#pause-fill"/></svg>Pause animation</button>
               <select id="select-random-animation" class="form-select form-select-sm" disabled title="Poses targeted by random playback. The pose currently playing is selected; choose another to switch to it"><option value="">(Loading pose list…)</option></select>
-              <button id="btn-random-animation" class="btn btn-sm btn-outline-info" disabled><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#shuffle"/></svg>Random pose playback</button>
+              <button id="btn-load-pose" class="btn btn-sm btn-outline-warning" disabled title="Load a GLB / FBX / VRMA file. Animations are applied to the selected model; files without a human animation are added as objects"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#upload"/></svg>Load pose</button>
               <button id="btn-save-vrma" class="btn btn-sm btn-outline-warning" disabled title="Save the current pose as .vrma"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#download"/></svg>Save pose</button>
               <button id="btn-copy-pose" class="btn btn-sm btn-outline-warning" disabled><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#clipboard"/></svg>Copy pose to clipboard</button>
               <button id="btn-paste-pose" class="btn btn-sm btn-outline-warning" disabled><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#clipboard-check"/></svg>Paste pose from clipboard</button>
-              <button id="btn-reset-pose" class="btn btn-sm btn-outline-secondary" disabled><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#arrow-counterclockwise"/></svg>Reset pose</button>
             </div>
             <input type="file" id="input-pose" accept=".glb,.fbx,.vrma" class="d-none" />
           </div>
@@ -389,6 +394,8 @@
               </div>
               <input type="range" class="form-range" id="physics-hair-collision" min="0" max="1.5" step="0.05" value="0">
             </div>
+            <hr class="border-secondary">
+            <button type="button" id="btn-settle-physics" class="btn btn-sm btn-outline-body w-100 mb-2" title="Let sway settle for a few seconds in the current pose (use it after changing the pose a lot, before a screenshot)">Settle sway</button>
           </div>
         </div>
 
@@ -421,10 +428,10 @@
               <label class="form-check-label small" for="toggle-grid">Show floor grid</label>
             </div>
             <hr class="border-secondary">
-            <div class="small fw-bold text-secondary mb-2" title="Hair and clothes sag under gravity. Models usually have no gravity set, so they do not hang down when you tilt the body or raise a leg"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#sliders"/></svg>Physics (hair & clothes)</div>
+            <div class="small fw-bold text-secondary mb-2" title="Simulates sway (SpringBone) such as hair, clothes, and accessories under gravity and wind. Models usually have no gravity set, so they do not hang down when you tilt the body or raise a leg"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#sliders"/></svg>Physics (sway)</div>
             <div class="form-check form-switch mb-2">
               <input class="form-check-input" type="checkbox" role="switch" id="toggle-physics" checked>
-              <label class="form-check-label small" for="toggle-physics">Simulate hair and clothes</label>
+              <label class="form-check-label small" for="toggle-physics">Enable sway physics</label>
             </div>
             <div class="mb-2">
               <div class="d-flex justify-content-between align-items-center small text-secondary">
@@ -470,7 +477,6 @@
               </div>
               <input type="range" class="form-range" id="wind-gust" min="0" max="1" step="0.05" value="0.5">
             </div>
-            <button type="button" id="btn-settle-physics" class="btn btn-sm btn-outline-body w-100 mb-3" title="Let hair and clothes settle for a few seconds in the current pose (use it after changing the pose a lot, before a screenshot)">Settle hair & clothes</button>
             <hr class="border-secondary">
             <div class="small fw-bold text-secondary mb-2"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#lightbulb"/></svg>Lights</div>
             <div id="light-controls"></div>
@@ -600,8 +606,10 @@
       "app.036": "The animation list is empty. Put .fbx / .glb / .vrma files in the animations folder and generate list.txt",
       "app.037": "Could not load {0}. Continuing random playback",
       "app.038": "Random pose playback failed",
-      "app.039": "<svg class=\"me-1\" width=\"1em\" height=\"1em\" fill=\"currentColor\" aria-hidden=\"true\"><use href=\"/vrm-pose-maker/icons/bootstrap-icons.svg#stop-fill\"/></svg>Stop random pose playback",
-      "app.040": "<svg class=\"me-1\" width=\"1em\" height=\"1em\" fill=\"currentColor\" aria-hidden=\"true\"><use href=\"/vrm-pose-maker/icons/bootstrap-icons.svg#shuffle\"/></svg>Random pose playback",
+      "app.039": "<svg width=\"1em\" height=\"1em\" fill=\"currentColor\" aria-hidden=\"true\"><use href=\"/vrm-pose-maker/icons/bootstrap-icons.svg#pause-fill\"/></svg>",
+      "app.040": "<svg width=\"1em\" height=\"1em\" fill=\"currentColor\" aria-hidden=\"true\"><use href=\"/vrm-pose-maker/icons/bootstrap-icons.svg#shuffle\"/></svg>",
+      "app.039-title": "Pause random pose playback",
+      "app.040-title": "Random pose playback",
       "app.041": "<div class=\"text-secondary small p-2\">Please load a VRM</div>",
       "app.042": "Removed {0} from the scene",
       "app.043": "Pinning the selected bone as a hinge and moving everything from its parent bone \"{0}\" upward",

@@ -148,8 +148,8 @@
         <!-- View Direction Buttons (bottom center of canvas) -->
         <div id="axis-buttons" class="position-absolute bottom-0 start-50 translate-middle-x mb-3 d-flex gap-2 align-items-center">
           <span class="text-secondary small me-1">カメラ:</span>
-          <button id="btn-view-front" class="btn btn-sm btn-outline-body"     title="正面から見る">正面 (F)</button>
-          <button id="btn-view-back"  class="btn btn-sm btn-outline-body"     title="背面から見る">背面 (B)</button>
+          <button id="btn-view-front" class="btn btn-sm btn-outline-body"     title="前から見る">前 (F)</button>
+          <button id="btn-view-back"  class="btn btn-sm btn-outline-body"     title="後ろから見る">後 (B)</button>
           <button id="btn-view-right" class="btn btn-sm btn-outline-danger"   title="右側面から見る">右 (R)</button>
           <button id="btn-view-left"  class="btn btn-sm btn-outline-danger"   title="左側面から見る">左 (L)</button>
           <button id="btn-view-top"   class="btn btn-sm btn-outline-success"  title="真上から見る">上 (T)</button>
@@ -192,20 +192,25 @@
 
         <!-- モデル・ポーズ タブ -->
         <div id="panel-tab-model" class="d-none flex-column flex-grow-1 overflow-hidden">
-          <div class="p-2 border-bottom border-secondary">
+          <div class="p-2 border-bottom border-secondary d-flex align-items-center justify-content-between">
             <div class="small fw-bold text-secondary"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#person-arms-up"/></svg>ポーズ</div>
+            <div class="d-flex gap-1">
+              <button type="button" id="btn-random-animation" class="btn btn-sm btn-outline-secondary" disabled title="ランダムポーズ再生" aria-label="ランダムポーズ再生">
+                <svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#shuffle"/></svg>
+              </button>
+              <button type="button" id="btn-reset-pose" class="btn btn-sm btn-outline-secondary" disabled title="ポーズをリセット" aria-label="ポーズをリセット">
+                <svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#arrow-counterclockwise"/></svg>
+              </button>
+            </div>
           </div>
           <div class="flex-grow-1 overflow-auto p-2">
             <div class="small text-secondary mb-1">選択中のモデルのポーズ</div>
             <div class="d-grid gap-2">
-              <button id="btn-load-pose" class="btn btn-sm btn-outline-warning" disabled title="GLB / FBX / VRMA を読み込みます。人型のアニメーションは選択中のモデルに適用し、それ以外はオブジェクトとして追加します"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#upload"/></svg>ポーズ読込</button>
-              <button id="btn-toggle-animation" class="btn btn-sm btn-outline-info" disabled><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#pause-fill"/></svg>アニメーションを一時停止</button>
               <select id="select-random-animation" class="form-select form-select-sm" disabled title="ランダム再生の対象一覧です。再生中のポーズが選択されます。選び直すとそのポーズに切り替わります"><option value="">(ポーズ一覧を読み込み中…)</option></select>
-              <button id="btn-random-animation" class="btn btn-sm btn-outline-info" disabled><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#shuffle"/></svg>ランダムポーズ再生</button>
+              <button id="btn-load-pose" class="btn btn-sm btn-outline-warning" disabled title="GLB / FBX / VRMA を読み込みます。人型のアニメーションは選択中のモデルに適用し、それ以外はオブジェクトとして追加します"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#upload"/></svg>ポーズ読込</button>
               <button id="btn-save-vrma" class="btn btn-sm btn-outline-warning" disabled title="現在のポーズを .vrma で保存します"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#download"/></svg>ポーズ保存</button>
               <button id="btn-copy-pose" class="btn btn-sm btn-outline-warning" disabled><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#clipboard"/></svg>ポーズをクリップボードにコピー</button>
               <button id="btn-paste-pose" class="btn btn-sm btn-outline-warning" disabled><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#clipboard-check"/></svg>ポーズをクリップボードから貼付</button>
-              <button id="btn-reset-pose" class="btn btn-sm btn-outline-secondary" disabled><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#arrow-counterclockwise"/></svg>ポーズリセット</button>
             </div>
             <input type="file" id="input-pose" accept=".glb,.fbx,.vrma" class="d-none" />
           </div>
@@ -389,6 +394,8 @@
               </div>
               <input type="range" class="form-range" id="physics-hair-collision" min="0" max="1.5" step="0.05" value="0">
             </div>
+            <hr class="border-secondary">
+            <button type="button" id="btn-settle-physics" class="btn btn-sm btn-outline-body w-100 mb-2" title="今のポーズで、揺れ物を数秒かけて落ち着かせます(ポーズを大きく変えたあと、撮影の前に使います)">揺れ物を落ち着かせる</button>
           </div>
         </div>
 
@@ -421,10 +428,10 @@
               <label class="form-check-label small" for="toggle-grid">床グリッドを表示</label>
             </div>
             <hr class="border-secondary">
-            <div class="small fw-bold text-secondary mb-2" title="髪や服が重力でたれ下がるようにします。モデルは重力が設定されていないことが多く、体を傾けたり脚を上げたりしても、そのままでは下へたれません"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#sliders"/></svg>物理(髪・服)</div>
+            <div class="small fw-bold text-secondary mb-2" title="髪・服・アクセサリなど、モデルに設定された揺れ物(SpringBone)を重力や風で動かします。モデルは重力が設定されていないことが多く、体を傾けたり脚を上げたりしても、そのままでは下へたれません"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#sliders"/></svg>物理（揺れ物）</div>
             <div class="form-check form-switch mb-2">
               <input class="form-check-input" type="checkbox" role="switch" id="toggle-physics" checked>
-              <label class="form-check-label small" for="toggle-physics">髪と服を物理で揺らす</label>
+              <label class="form-check-label small" for="toggle-physics">揺れ物の物理を有効にする</label>
             </div>
             <div class="mb-2">
               <div class="d-flex justify-content-between align-items-center small text-secondary">
@@ -470,7 +477,6 @@
               </div>
               <input type="range" class="form-range" id="wind-gust" min="0" max="1" step="0.05" value="0.5">
             </div>
-            <button type="button" id="btn-settle-physics" class="btn btn-sm btn-outline-body w-100 mb-3" title="今のポーズで、髪や服を数秒かけて落ち着かせます(ポーズを大きく変えたあと、撮影の前に使います)">髪・服を落ち着かせる</button>
             <hr class="border-secondary">
             <div class="small fw-bold text-secondary mb-2"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#lightbulb"/></svg>ライト</div>
             <div id="light-controls"></div>
@@ -600,8 +606,10 @@
       "app.036": "アニメーション一覧が空です。animations フォルダに .fbx / .glb / .vrma を置いて list.txt を作成してください",
       "app.037": "{0} を読み込めませんでした。ランダム再生を続けます",
       "app.038": "ランダムポーズ再生に失敗しました",
-      "app.039": "<svg class=\"me-1\" width=\"1em\" height=\"1em\" fill=\"currentColor\" aria-hidden=\"true\"><use href=\"/vrm-pose-maker/icons/bootstrap-icons.svg#stop-fill\"/></svg>ランダムポーズ再生を停止",
-      "app.040": "<svg class=\"me-1\" width=\"1em\" height=\"1em\" fill=\"currentColor\" aria-hidden=\"true\"><use href=\"/vrm-pose-maker/icons/bootstrap-icons.svg#shuffle\"/></svg>ランダムポーズ再生",
+      "app.039": "<svg width=\"1em\" height=\"1em\" fill=\"currentColor\" aria-hidden=\"true\"><use href=\"/vrm-pose-maker/icons/bootstrap-icons.svg#pause-fill\"/></svg>",
+      "app.040": "<svg width=\"1em\" height=\"1em\" fill=\"currentColor\" aria-hidden=\"true\"><use href=\"/vrm-pose-maker/icons/bootstrap-icons.svg#shuffle\"/></svg>",
+      "app.039-title": "ランダムポーズ再生を一時停止",
+      "app.040-title": "ランダムポーズ再生",
       "app.041": "<div class=\"text-secondary small p-2\">VRM を読み込んでください</div>",
       "app.042": "{0} をシーンから削除しました",
       "app.043": "選択中のボーンを蝶番に固定し、親ボーン「{0}」から上を動かします",

@@ -423,10 +423,7 @@ input[type="range"] {
   #panel-left {
     display: none !important;
   }
-  #panel-right {
-    width: 180px !important;
-    min-width: 160px !important;
-  }
+  /* 右パネルは通常時と同じ 240px を維持（180px だとタブが途切れる） */
   #footer .ms-auto {
     display: none !important;
   }

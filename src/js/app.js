@@ -509,11 +509,11 @@ class App {
     });
 
     // ポーズ読込(GLB / FBX / VRMA を拡張子で判別)と自己完結プロジェクトの保存・読込
-    this._btnToggleAnimation.addEventListener(
+    this._btnToggleAnimation?.addEventListener(
       "click",
       () => this._toggleAnimation(),
     );
-    this._btnRandomAnimation.addEventListener(
+    this._btnRandomAnimation?.addEventListener(
       "click",
       () => this._toggleRandomAnimation(),
     );
@@ -2124,15 +2124,15 @@ class App {
   }
 
   _updateAnimationButton(model) {
+    const btn = this._btnToggleAnimation;
+    if (!btn) return;
     const action = model?.animationAction;
-    this._btnToggleAnimation.disabled = !action;
+    btn.disabled = !action;
     if (!action) {
-      this._btnToggleAnimation.innerHTML = tr("app.030");
+      btn.innerHTML = tr("app.030");
       return;
     }
-    this._btnToggleAnimation.innerHTML = action.paused
-      ? tr("app.031")
-      : tr("app.030");
+    btn.innerHTML = action.paused ? tr("app.031") : tr("app.030");
   }
 
   // =========================================================
@@ -2420,10 +2420,18 @@ class App {
 
   /** ランダム再生ボタンの見た目を、渡されたモデル(通常は現在アクティブなモデル)の状態に合わせる。 */
   _updateRandomAnimationButton(model) {
+    const btn = this._btnRandomAnimation;
+    if (!btn) return;
     const active = !!model?.randomAnimationActive;
-    this._btnRandomAnimation.innerHTML = active ? tr("app.039") : tr("app.040");
-    this._btnRandomAnimation.classList.toggle("btn-info", active);
-    this._btnRandomAnimation.classList.toggle("btn-outline-info", !active);
+    btn.innerHTML = active ? tr("app.039") : tr("app.040");
+    // ヘッダーのアイコンボタン: 再生中は pause＋塗りつぶし色、停止中は shuffle＋アウトライン
+    // 再生中は色だけで「押すと止められる」状態が分かるようにする
+    btn.classList.toggle("btn-warning", active);
+    btn.classList.toggle("btn-outline-secondary", !active);
+    btn.classList.remove("btn-info", "btn-outline-info");
+    const title = active ? tr("app.039-title") : tr("app.040-title");
+    btn.title = title;
+    btn.setAttribute("aria-label", title);
   }
 
   _removeModel(id) {
@@ -2854,7 +2862,14 @@ class App {
   _resetPose() {
     if (!this._vrm) return;
     const model = this._models.find((item) => item.id === this._activeModelId);
-    if (model) this._resetModelPose(model);
+    if (!model) return;
+    // ユーザー操作のリセットでは、ランダム再生を止め、セレクトも先頭(未選択)に戻す
+    this._stopRandomAnimationForModel(model);
+    model.lastRandomAnimationName = null;
+    this._syncAnimationSelect(model);
+    // 一覧未取得などで _syncAnimationSelect が no-op でも、表示は先頭へ戻す
+    if (this._selectRandomAnimation) this._selectRandomAnimation.value = "";
+    this._resetModelPose(model);
   }
 
   /**
@@ -2930,7 +2945,7 @@ class App {
       this._btnCaptureFullBody,
       this._btnResetPose,
     ].forEach((btn) => {
-      btn.disabled = !enabled;
+      if (btn) btn.disabled = !enabled;
     });
     this._modelButtonsEnabled = enabled;
     this._updateAnimationSelectState();
