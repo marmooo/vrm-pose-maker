@@ -20,6 +20,8 @@ import {
 } from "./bone-hierarchy.js";
 import { LightPanel } from "./light-panel.js";
 import { LightGizmo } from "./light-gizmo.js";
+import { IkManager } from "./ik.js";
+import { IkInput } from "./ik-input.js";
 import {
   applyMaterialsSnapshot,
   getMaterialsSnapshot,
@@ -69,6 +71,9 @@ const RANDOM_ANIMATION_TRANSITION_S = 0.5;
 // (ビルド無しのESモジュール構成のため、キャッシュされやすい)。更新を反映したのに
 // 直らないという時、本当に新しいコードが読み込まれているかをここで確認できるようにする。
 console.info("[vrm-pose-app] build: 2026-10-18-perf-v1");
+
+/** IK の画面に出す部位 */
+const IK_UI_CHAINS = ["leftHand", "rightHand"];
 
 class App {
   constructor() {
@@ -195,6 +200,18 @@ class App {
       onSelect: (id) => this._lightPanel.highlightLight(id),
     });
     this._scene.lightGizmo = this._lightGizmo;
+
+    // 手を指定した場所に置く(IK)。目標点はモデルごとに持ち、画面上の印(丸)をクリック/ドラッグで指定する
+    this._ik = new IkManager(this._scene.scene, {
+      getBodySurface: (vrm) => this._scene.getBodySurface(vrm),
+      onChange: () => this._syncIkUi(),
+    });
+    this._scene.ik = this._ik;
+    this._ikInput = new IkInput(this._canvas, this._scene, this._ik, {
+      getVrm: () => this._vrm,
+      pickPoint: (ray, reject) => this._pickSurfacePoint(ray, reject),
+      onPlacingChange: () => this._syncIkUi(),
+    });
 
     // ライト編集パネル(シーン共通。モデルには依存しない)
     this._lightPanel = new LightPanel(this._lightControls, this._scene, {
@@ -348,6 +365,49 @@ class App {
         this._syncPhysicsUi();
       },
     );
+    for (const chain of IK_UI_CHAINS) {
+      document.getElementById(`ik-${chain}`)?.addEventListener(
+        "change",
+        (e) => {
+          if (!this._vrm) return;
+          if (!e.target.checked) {
+            this._ik.setEnabled(this._vrm, chain, false);
+            if (this._ikInput.placing === chain) this._ikInput.cancelPlacing();
+          } else if (this._ik.getTarget(this._vrm, chain)) {
+            this._ik.setEnabled(this._vrm, chain, true);
+          } else {
+            this._ikInput.beginPlacing(chain); // まだ場所が無いので、まず指定してもらう
+          }
+          this._syncIkUi();
+        },
+      );
+      document.getElementById(`ik-roll-${chain}`)?.addEventListener(
+        "input",
+        (e) => {
+          if (this._vrm) {
+            this._ik.setRoll(
+              this._vrm,
+              chain,
+              Number(e.target.value) * Math.PI / 180,
+            );
+          }
+        },
+      );
+      document.querySelector(`[data-ik-place="${chain}"]`)?.addEventListener(
+        "click",
+        () => {
+          if (this._vrm) this._ikInput.beginPlacing(chain);
+        },
+      );
+      document.querySelector(`[data-ik-remove="${chain}"]`)?.addEventListener(
+        "click",
+        () => {
+          if (!this._vrm) return;
+          if (this._ikInput.placing === chain) this._ikInput.cancelPlacing();
+          this._ik.remove(this._vrm, chain);
+        },
+      );
+    }
     document.getElementById("collision-ground")?.addEventListener(
       "change",
       (e) => this._scene.setGroundContact(e.target.checked),
@@ -537,6 +597,7 @@ class App {
         scene,
         (vrm) => this._getExpressionNames(vrm),
         (vrm) => getMaterialsSnapshot(vrm),
+        (vrm) => this._ik.serialize(vrm),
       );
       project.objects = await this._objects.serialize();
       Exporter._download(
@@ -638,6 +699,7 @@ class App {
       if (project.format !== "vrm-pose-project" || !project.models?.[0]?.data) {
         throw new Error(tr("app.008"));
       }
+      for (const item of this._models) this._ik.forget(item.vrm);
       this._models = [];
       this._scene.setVrms([]);
       for (const model of project.models) {
@@ -863,6 +925,53 @@ class App {
     }
   }
 
+  /** IK のスイッチ・ボタンを、今のモデルの目標点に合わせる。 */
+  _syncIkUi() {
+    const placing = this._ikInput?.placing ?? null;
+    for (const chain of IK_UI_CHAINS) {
+      const target = this._vrm && this._ik.getTarget(this._vrm, chain);
+      const toggle = document.getElementById(`ik-${chain}`);
+      if (toggle) toggle.checked = !!target?.enabled;
+      document.querySelector(`[data-ik-place="${chain}"]`)?.classList.toggle(
+        "active",
+        placing === chain,
+      );
+      const roll = document.getElementById(`ik-roll-${chain}`);
+      if (roll) {
+        roll.disabled = !target?.normal; // 面に置いた手だけ、手のひらを回せる
+        roll.value = Math.round(
+          ((target?.fingerBase ? target.roll : 0) * 180) / Math.PI,
+        ); // 自動で選んだ向きも表示する
+      }
+      const remove = document.querySelector(`[data-ik-remove="${chain}"]`);
+      if (remove) remove.disabled = !target;
+    }
+    document.getElementById("ik-hint")?.classList.toggle("d-none", !placing);
+  }
+
+  /** レイが当たる一番手前の表面の点と向き(オブジェクトとモデルが対象)。IK の目標点の指定に使う。 */
+  _pickSurfacePoint(ray, reject = null) {
+    let best = this._objects.pickPoint(ray, reject);
+    let bestDist = best ? best.point.distanceTo(ray.ray.origin) : Infinity;
+    for (const model of this._models) {
+      const meshes = [];
+      model.vrm.scene.traverse((o) => {
+        if (o.isSkinnedMesh) meshes.push(o);
+      });
+      const hit = ray.intersectObjects(meshes, false).find((h) =>
+        !reject?.(h.point)
+      );
+      if (!hit || hit.distance >= bestDist) continue;
+      const normal = hit.face
+        ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld)
+        : new THREE.Vector3(0, 1, 0);
+      if (normal.dot(ray.ray.direction) > 0) normal.negate();
+      best = { point: hit.point.clone(), normal };
+      bestDist = hit.distance;
+    }
+    return best;
+  }
+
   _syncGroundContactUi() {
     const toggle = document.getElementById("collision-ground");
     if (toggle) toggle.checked = this._scene.getGroundContact();
@@ -993,6 +1102,8 @@ class App {
     this._boneCtrl.setVrm(model.vrm);
     this._boneSphere.setVrm(model.vrm);
     this._boneSphere.hide();
+    this._ikInput?.cancelPlacing();
+    this._ik?.setActiveVrm(model.vrm);
     this._ui.buildBoneList(model.vrm);
     this._ui.buildExpressionControls(
       this._getExpressionNames(model.vrm),
@@ -2319,6 +2430,7 @@ class App {
     const index = this._models.findIndex((item) => item.id === id);
     if (index < 0) return;
     const [removed] = this._models.splice(index, 1);
+    this._ik.forget(removed.vrm);
     removed.randomAnimationActive = false; // ループしていれば自然に止まるようにする
     if (removed.animationMixer) {
       this._disposeMixer(removed.animationMixer, removed.vrm.scene);
@@ -2330,6 +2442,7 @@ class App {
       else {
         this._activeModelId = null;
         this._vrm = null;
+        this._ik.setActiveVrm(null);
         this._vrmFile = null;
         this._vrmFilename = "";
         this._boneCtrl.setVrm(null);
@@ -2410,6 +2523,7 @@ class App {
       vrm.expressionManager?.setValue(name, value);
     }
     if (model.materials) applyMaterialsSnapshot(vrm, model.materials);
+    this._ik.restore(vrm, model.ik);
     const file = new File(
       [Exporter.dataUrlToArrayBuffer(model.data)],
       model.name,

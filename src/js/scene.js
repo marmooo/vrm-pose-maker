@@ -150,6 +150,7 @@ export class SceneManager {
   constructor(canvas) {
     this.canvas = canvas;
     this.scene = null;
+    this.ik = null; // IkManager(app.js から設定)
     this.camera = null;
     this.renderer = null;
     this.controls = null;
@@ -171,6 +172,7 @@ export class SceneManager {
       strict: { hair: false, skirt: false, other: false }, // 部位ごとの、厳密な当たり判定(服の表面に沿った球)
     };
     this._clothPush = new WeakMap(); // vrm → { specs, uniforms, meshes }。体のカプセルの測定結果と、押し出しを仕込んだメッシュ
+    this._bodySurfaces = new WeakMap(); // vrm → IK 用の、体の表面の当たり判定
     this._strict = new WeakMap(); // vrm → Map(部位 → 厳密な当たり判定の状態)
     this._hairCollide = new WeakMap(); // vrm → { specs, group, colliders, joints, base, scale, active }。髪用に足した当たり判定
     this._springManagers = new WeakMap(); // 物理を無効にしている間も、元の manager を保持する
@@ -279,6 +281,7 @@ export class SceneManager {
    * 固定刻みなら、同じ入力には同じ結果になるので、何も動かしていなければ完全に静止する。
    */
   _updateVrm(vrm, delta) {
+    this.ik?.apply(vrm); // 手足を指定した場所に届かせる(姿勢を決める処理なので vrm.update より前)
     const manager = vrm.springBoneManager;
     if (!manager) {
       vrm.update(delta);
@@ -1500,6 +1503,79 @@ export class SceneManager {
         this._uploadClothPush(entry);
       };
     }
+    return entry;
+  }
+
+  /**
+   * 体(胴・頭・腕・脚)の表面の当たり判定を、ボーンごとに返す([{ name, bone, shape }])。IK で、腕が体を突き抜けないようにするのに使う。
+   * 初期姿勢のメッシュから作り、最初に呼ばれたときだけ作る(揺れ物の頂点は表面に数えない)。
+   */
+  getBodySurface(vrm) {
+    let entry = this._bodySurfaces.get(vrm);
+    if (entry) return entry;
+    const names = [
+      "hips",
+      "spine",
+      "chest",
+      "upperChest",
+      "neck",
+      "head",
+      ...["left", "right"].flatMap((side) =>
+        [
+          "Shoulder",
+          "UpperArm",
+          "LowerArm",
+          "Hand",
+          "UpperLeg",
+          "LowerLeg",
+          "Foot",
+        ].map((n) => side + n)
+      ),
+    ];
+    const manager = vrm.springBoneManager;
+    const springBones = new Set();
+    for (const joint of manager?.joints ?? []) {
+      springBones.add(joint.bone);
+      if (joint.child) springBones.add(joint.child);
+    }
+    let shapes = [];
+    this._withRestPose(vrm, manager, () => {
+      try {
+        shapes = buildSurfaceShapes(vrm, names, springBones);
+      } catch (error) {
+        console.warn("body surface failed", error);
+      }
+    });
+    const nameOf = new Map(
+      names.map((n) => [vrm.humanoid.getRawBoneNode(n), n]),
+    );
+    // IK が解の途中で動かす正規化ボーンと、そこから生ボーンへの固定の変換(初期姿勢で求める)。
+    // 当たり判定を、前のフレームの生ボーンではなく、今の解の姿勢に追随させるために使う
+    const offsets = new Map();
+    this._withRestPose(vrm, manager, () => {
+      vrm.scene.updateMatrixWorld(true);
+      for (const [bone, name] of nameOf) {
+        const node = vrm.humanoid.getNormalizedBoneNode(name);
+        if (!bone || !node) continue;
+        offsets.set(
+          bone,
+          new THREE.Matrix4().copy(node.matrixWorld).invert().multiply(
+            bone.matrixWorld,
+          ),
+        );
+      }
+    });
+    entry = shapes.map(({ bone, shape }) => {
+      const name = nameOf.get(bone) ?? "";
+      return {
+        name,
+        bone,
+        node: name ? vrm.humanoid.getNormalizedBoneNode(name) : null,
+        offset: offsets.get(bone) ?? null,
+        shape,
+      };
+    });
+    this._bodySurfaces.set(vrm, entry);
     return entry;
   }
 

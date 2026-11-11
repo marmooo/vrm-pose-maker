@@ -198,6 +198,7 @@ export class Exporter {
     sceneState,
     getExpressionNames,
     getMaterials,
+    getIk,
   ) {
     return {
       format: "vrm-pose-project",
@@ -213,6 +214,7 @@ export class Exporter {
           scale: vrm.scene.scale.toArray(),
         },
         groundLift: vrm.scene.userData.groundLift ?? 0,
+        ik: getIk?.(vrm) ?? undefined,
         pose: Exporter._pose(vrm),
         expressions: Object.fromEntries(
           getExpressionNames(vrm).map(

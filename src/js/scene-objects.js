@@ -227,6 +227,23 @@ export class SceneObjects {
     return best;
   }
 
+  /** レイが当たる一番手前の物の表面の点と向き({ point, normal })。当たらなければ null。reject(点) が true の当たりは除く。 */
+  pickPoint(raycaster, reject = null) {
+    let best = null;
+    for (const item of this._items) {
+      const hit = raycaster.intersectObject(item.root, true).find((h) =>
+        !reject?.(h.point)
+      );
+      if (hit && (!best || hit.distance < best.distance)) best = hit;
+    }
+    if (!best) return null;
+    const normal = best.face
+      ? best.face.normal.clone().transformDirection(best.object.matrixWorld)
+      : new THREE.Vector3(0, 1, 0);
+    if (normal.dot(raycaster.ray.direction) > 0) normal.negate(); // 手前を向ける
+    return { point: best.point.clone(), normal };
+  }
+
   /** 画面外に出た物を探せるよう、注視点とカメラをその物の中心へ動かす(見る向きと距離は変えない)。 */
   focus(id) {
     const item = this._items.find((i) => i.id === id);

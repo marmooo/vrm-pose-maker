@@ -325,10 +325,54 @@
             <div class="small fw-bold text-secondary"><svg class="me-1" width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#bounding-box-circles"/></svg>衝突</div>
           </div>
           <div class="flex-grow-1 overflow-auto p-2">
+            <div class="mb-2" title="選んだ部位の揺れ物にだけ、服の表面に沿った小さな球を敷き詰めて、服にめり込みにくくします。髪の突き抜け軽減より軽く、それが 0 のときに効きます。">
+              <div class="small mb-1">厳密な当たり判定</div>
+              <div class="form-check form-check-inline form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" id="physics-strict-hair">
+                <label class="form-check-label small" for="physics-strict-hair">髪</label>
+              </div>
+              <div class="form-check form-check-inline form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" id="physics-strict-skirt">
+                <label class="form-check-label small" for="physics-strict-skirt">スカート</label>
+              </div>
+              <div class="form-check form-check-inline form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" id="physics-strict-other">
+                <label class="form-check-label small" for="physics-strict-other">その他</label>
+              </div>
+              <div class="small text-secondary mt-1">以下の機能(手を置くなど)を使うときは、「その他」をオンにしてください。体の突き抜けを抑えます。</div>
+            </div>
+            <hr class="border-secondary">
             <div class="form-check form-switch mb-3" title="体のどこか(立っていれば足裏、座っていればお尻、寝ていれば背中など)が床(y=0)にめり込むときだけ、その分モデルを持ち上げます。空中に浮いている分には何もしません。ポーズを戻して不要になれば持ち上げも自動で戻ります。髪やスカートなど揺れ物は数えません。">
               <input class="form-check-input" type="checkbox" role="switch" id="collision-ground">
               <label class="form-check-label small" for="collision-ground">地面にめり込まない</label>
             </div>
+            <hr class="border-secondary">
+            <div class="small fw-bold text-secondary mb-2" title="「場所を指定」を押して、画面を押したまま動かすと、手のひらがその表面に付いてきます。離すと確定します。面に触れる場所では、手のひらを面に向けます。印(丸)も同じようにドラッグで動かせます。モデルを動かしても、手は印の場所に残ります。オフにすると、手は元の動きに戻ります。腕を回して、ひじの向きを変えることもできます。">手を置く場所(IK)</div>
+            <div class="d-flex align-items-center gap-2 mb-2">
+              <div class="form-check form-switch mb-0 flex-grow-1">
+                <input class="form-check-input" type="checkbox" role="switch" id="ik-leftHand">
+                <label class="form-check-label small" for="ik-leftHand">左手</label>
+              </div>
+              <button type="button" class="btn btn-sm btn-outline-secondary" data-ik-place="leftHand" title="押したまま画面の上を動かして、手を置く場所を決めます">場所を指定</button>
+              <button type="button" class="btn-close" data-ik-remove="leftHand" title="削除" aria-label="削除"></button>
+            </div>
+            <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="手のひらを面に向けたまま、指を面の上でどちらへ向けるかを回します。面に置いた手だけで使えます。">
+              <label class="small text-secondary text-nowrap" for="ik-roll-leftHand">手のひらの回転</label>
+              <input type="range" class="form-range" id="ik-roll-leftHand" min="-180" max="180" step="1" value="0" disabled>
+            </div>
+            <div class="d-flex align-items-center gap-2 mb-2">
+              <div class="form-check form-switch mb-0 flex-grow-1">
+                <input class="form-check-input" type="checkbox" role="switch" id="ik-rightHand">
+                <label class="form-check-label small" for="ik-rightHand">右手</label>
+              </div>
+              <button type="button" class="btn btn-sm btn-outline-secondary" data-ik-place="rightHand" title="押したまま画面の上を動かして、手を置く場所を決めます">場所を指定</button>
+              <button type="button" class="btn-close" data-ik-remove="rightHand" title="削除" aria-label="削除"></button>
+            </div>
+            <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="手のひらを面に向けたまま、指を面の上でどちらへ向けるかを回します。面に置いた手だけで使えます。">
+              <label class="small text-secondary text-nowrap" for="ik-roll-rightHand">手のひらの回転</label>
+              <input type="range" class="form-range" id="ik-roll-rightHand" min="-180" max="180" step="1" value="0" disabled>
+            </div>
+            <div id="ik-hint" class="small text-info mb-2 d-none">画面を押したまま動かして場所を決め、離すと確定します(Esc で中止)</div>
             <hr class="border-secondary">
             <div class="small fw-bold text-secondary mb-2">揺れ物の突き抜け軽減</div>
             <div class="mb-1">
@@ -344,21 +388,6 @@
                 <span id="physics-hair-collision-value">0.00</span>
               </div>
               <input type="range" class="form-range" id="physics-hair-collision" min="0" max="1.5" step="0.05" value="0">
-            </div>
-            <div class="mb-2" title="選んだ部位の揺れ物にだけ、服の表面に沿った小さな球を敷き詰めて、服にめり込みにくくします。髪の突き抜け軽減より軽く、それが 0 のときに効きます。">
-              <div class="small mb-1">厳密な当たり判定</div>
-              <div class="form-check form-check-inline form-switch">
-                <input class="form-check-input" type="checkbox" role="switch" id="physics-strict-hair">
-                <label class="form-check-label small" for="physics-strict-hair">髪</label>
-              </div>
-              <div class="form-check form-check-inline form-switch">
-                <input class="form-check-input" type="checkbox" role="switch" id="physics-strict-skirt">
-                <label class="form-check-label small" for="physics-strict-skirt">スカート</label>
-              </div>
-              <div class="form-check form-check-inline form-switch">
-                <input class="form-check-input" type="checkbox" role="switch" id="physics-strict-other">
-                <label class="form-check-label small" for="physics-strict-other">その他</label>
-              </div>
             </div>
           </div>
         </div>
