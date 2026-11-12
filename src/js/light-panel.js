@@ -192,7 +192,7 @@ export class LightPanel {
     // 一覧をざっと見ただけでどれが点いているか分かる(別途「プレビュー中」の
     // ような注記を出さなくても状態が自明になる)。
     const litSwitchWrapper = document.createElement("div");
-    litSwitchWrapper.className = "form-check form-switch mb-0 me-2";
+    litSwitchWrapper.className = "form-check form-switch mb-0";
     const litSwitch = document.createElement("input");
     litSwitch.className = "form-check-input";
     litSwitch.type = "checkbox";
