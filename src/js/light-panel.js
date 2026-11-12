@@ -81,14 +81,44 @@ export class LightPanel {
   }
 
   /**
-   * 「ソロ」: 指定したライトだけを点灯状態にし、他はすべて消灯する。
-   * 各ライトのON/OFFスイッチを一括操作するショートカットにすぎないので、
-   * ソロ後も気に入らなければどのライトのスイッチでも個別に戻せる。
+   * 指定ライトのパラメータを、種類ごとのスライダー範囲内でランダム化する。
+   * 色・強度・位置・減衰など、そのライトが持つ編集可能項目を一通り振り直す。
+   * 消灯中でも強度は正の値になる(再点灯した状態)。リセット用の original は変えない。
    */
-  _solo(id) {
-    for (const entry of this._scene.lights) {
-      this._setLightEnabled(entry.id, entry.id === id);
+  _randomize(id) {
+    const entry = this._scene.getLight(id);
+    if (!entry) return;
+    const { type, light } = entry;
+    const rand = (min, max) => min + Math.random() * (max - min);
+    const randColor = () =>
+      "#" + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, "0");
+
+    const isAmbientLike = type === "ambient" || type === "hemisphere";
+    light.color.set(randColor());
+    // スライダーと同じ範囲。完全に 0 だと消灯と区別がつかないので下限を少し上げる
+    light.intensity = isAmbientLike ? rand(0.1, 3) : rand(1, 50);
+
+    if (type === "hemisphere" && light.groundColor) {
+      light.groundColor.set(randColor());
     }
+
+    if (light.position && !isAmbientLike) {
+      light.position.set(rand(-10, 10), rand(-10, 10), rand(-10, 10));
+    }
+
+    if (type === "point" || type === "spot") {
+      light.distance = rand(0, 30);
+      light.decay = rand(0, 4);
+    }
+
+    if (type === "spot") {
+      light.angle = rand(0.05, Math.PI / 2 - 0.05);
+      light.penumbra = rand(0, 1);
+    }
+
+    // 消灯していた場合の退避値もクリアし、ON 状態として扱う
+    if (entry._prevIntensity != null) entry._prevIntensity = light.intensity;
+
     this.build();
     this._notify();
   }
@@ -214,13 +244,13 @@ export class LightPanel {
     titleGroup.className = "d-flex align-items-center";
     titleGroup.append(litSwitchWrapper, title);
 
-    const soloBtn = document.createElement("button");
-    soloBtn.type = "button";
-    soloBtn.className = "btn btn-sm btn-outline-warning";
-    soloBtn.innerHTML =
-      '<svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#bullseye"/></svg>';
-    soloBtn.title = tr("light.012");
-    soloBtn.addEventListener("click", () => this._solo(id));
+    const randomBtn = document.createElement("button");
+    randomBtn.type = "button";
+    randomBtn.className = "btn btn-sm btn-outline-body";
+    randomBtn.innerHTML =
+      '<svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="/vrm-pose-maker/icons/bootstrap-icons.svg#shuffle"/></svg>';
+    randomBtn.title = tr("light.012");
+    randomBtn.addEventListener("click", () => this._randomize(id));
 
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
@@ -235,8 +265,8 @@ export class LightPanel {
     });
 
     const btnGroup = document.createElement("div");
-    btnGroup.className = "d-flex gap-1";
-    btnGroup.append(soloBtn, removeBtn);
+    btnGroup.className = "d-flex gap-1 ms-2";
+    btnGroup.append(randomBtn, removeBtn);
 
     header.append(titleGroup, btnGroup);
     card.appendChild(header);
