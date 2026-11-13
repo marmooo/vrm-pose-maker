@@ -10,6 +10,7 @@
  *
  * どちらの画像も無くてよい(無いときはもう一方、両方無ければ仮の表示にする)。
  * 一覧の段階では画像だけを(遅延読込で)取得するので、モデル本体の通信は選択するまで発生しない。
+ * 選択時に VRM の glTF JSON チャンクだけを読んでライセンス情報をプレビューに表示する。
  */
 import { tr } from "./i18n.js";
 
@@ -31,6 +32,9 @@ const IMAGE_PRIORITY = new Map(IMAGE_EXTENSIONS.map((ext, i) => [ext, i]));
 
 const PORTRAIT_SUFFIX = "portrait";
 const FULL_BODY_SUFFIX = "full_body";
+
+/** GLB の JSON チャンク先頭を読むときの初期バイト数(ヘッダ12 + チャンクヘッダ8 + 余裕) */
+const GLB_PROBE_BYTES = 64 * 1024;
 
 function extensionOf(path) {
   const m = /\.([^./]+)$/.exec(path);
@@ -106,6 +110,117 @@ export function parseModelList(text, baseUrl) {
   }));
 }
 
+/**
+ * ArrayBuffer 先頭から GLB の JSON チャンクを取り出す。
+ * チャンク全体が buffer に収まっていない場合は必要なバイト数を返す。
+ * @returns {{ json: object } | { needBytes: number } | null}
+ */
+function parseGlbJsonFromBuffer(buffer) {
+  if (buffer.byteLength < 20) return { needBytes: 20 };
+  const view = new DataView(buffer);
+  // magic "glTF"
+  if (view.getUint32(0, true) !== 0x46546c67) return null;
+  const jsonChunkLength = view.getUint32(12, true);
+  const jsonChunkType = view.getUint32(16, true);
+  // 0x4E4F534A = "JSON"
+  if (jsonChunkType !== 0x4e4f534a) return null;
+  const jsonStart = 20;
+  const jsonEnd = jsonStart + jsonChunkLength;
+  if (buffer.byteLength < jsonEnd) return { needBytes: jsonEnd };
+  const jsonBytes = new Uint8Array(buffer, jsonStart, jsonChunkLength);
+  const text = new TextDecoder("utf-8").decode(jsonBytes);
+  try {
+    return { json: JSON.parse(text) };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * VRM(GLB) の URL からメタ情報だけを取得する(メッシュは読まない)。
+ * Range 対応サーバでは JSON チャンク分だけ取得する。
+ * @param {string} url
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<object|null>} VRM0 meta または VRM1 meta、失敗時 null
+ */
+export async function fetchVrmMeta(url, signal) {
+  const tryParse = (buf) => {
+    const r = parseGlbJsonFromBuffer(buf);
+    if (!r || r.needBytes) return r;
+    const ext = r.json?.extensions;
+    if (!ext) return null;
+    // VRM 1.0
+    if (ext.VRMC_vrm?.meta) return ext.VRMC_vrm.meta;
+    // VRM 0.x
+    if (ext.VRM?.meta) return ext.VRM.meta;
+    return null;
+  };
+
+  // まず先頭だけ Range で取る
+  let res = await fetch(url, {
+    headers: { Range: `bytes=0-${GLB_PROBE_BYTES - 1}` },
+    signal,
+  });
+  if (!res.ok && res.status !== 206) {
+    // Range 非対応なら全文
+    res = await fetch(url, { signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return tryParse(await res.arrayBuffer());
+  }
+  let buffer = await res.arrayBuffer();
+  let parsed = tryParse(buffer);
+  if (parsed && parsed.needBytes) {
+    // JSON チャンクがプローブより大きい場合は必要分を取り直す
+    res = await fetch(url, {
+      headers: { Range: `bytes=0-${parsed.needBytes - 1}` },
+      signal,
+    });
+    if (!res.ok && res.status !== 206) {
+      res = await fetch(url, { signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    }
+    buffer = await res.arrayBuffer();
+    parsed = tryParse(buffer);
+  }
+  if (!parsed || parsed.needBytes) return null;
+  return parsed;
+}
+
+/**
+ * meta オブジェクトから表示用のライセンス情報を作る。
+ * 長い URL は出さず、短いラベル（バッジ）とリンク先だけ返す。
+ * @returns {{ label: string, url: string|null }}
+ */
+export function formatLicenseFromMeta(meta) {
+  if (!meta || typeof meta !== "object") {
+    return { label: "", url: null };
+  }
+
+  // リンク先の優先順位: モデル固有の otherLicenseUrl > 標準 licenseUrl
+  const otherUrl =
+    (typeof meta.otherLicenseUrl === "string" && meta.otherLicenseUrl) ||
+    (typeof meta.otherPermissionUrl === "string" && meta.otherPermissionUrl) ||
+    null;
+  const licenseUrl = (typeof meta.licenseUrl === "string" && meta.licenseUrl) ||
+    null;
+  const url = otherUrl || licenseUrl;
+
+  // VRM 0.0: licenseName（CC_BY など）があれば短いラベルに使う
+  if (typeof meta.licenseName === "string" && meta.licenseName) {
+    const name = meta.licenseName.replace(/_/g, " ");
+    // "Other" だけだと意味が薄いので、リンクがあるなら "License" に寄せる
+    const label = name === "Other" && url ? "License" : name;
+    return { label, url };
+  }
+
+  // VRM 1.0 など: 常に短い "License" バッジ（URL があるときだけ表示）
+  if (url) {
+    return { label: "License", url };
+  }
+
+  return { label: "", url: null };
+}
+
 export class ModelPicker {
   /**
    * @param {object} options
@@ -121,12 +236,17 @@ export class ModelPicker {
     this._entries = [];
     this._selected = null;
     this._cards = new Map(); // key → ボタン要素
+    this._metaCache = new Map(); // vrmUrl → meta | null
+    this._metaAbort = null;
 
     this._el = document.getElementById("model-picker");
     this._grid = document.getElementById("model-picker-grid");
     this._previewImg = document.getElementById("model-picker-preview-img");
     this._previewEmpty = document.getElementById("model-picker-preview-empty");
     this._previewName = document.getElementById("model-picker-preview-name");
+    this._previewLicense = document.getElementById(
+      "model-picker-preview-license",
+    );
     this._btnLoad = document.getElementById("model-picker-load");
     this._btnDevice = document.getElementById("model-picker-device");
     this._modal = this._el
@@ -226,6 +346,76 @@ export class ModelPicker {
     return svg;
   }
 
+  _setLicenseDisplay(label, url) {
+    const el = this._previewLicense;
+    if (!el) return;
+    el.replaceChildren();
+    if (!label) {
+      el.classList.add("d-none");
+      return;
+    }
+    el.classList.remove("d-none");
+    // Bootstrap の badge をそのまま使う（独自スタイルは不要）
+    const badgeClass =
+      "badge rounded-pill text-bg-secondary fw-normal text-decoration-none";
+    if (url) {
+      const a = document.createElement("a");
+      a.href = url;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.className = badgeClass;
+      a.textContent = label;
+      a.title = url;
+      el.append(a);
+    } else {
+      const span = document.createElement("span");
+      span.className = badgeClass;
+      span.textContent = label;
+      el.append(span);
+    }
+  }
+
+  async _loadAndShowLicense(entry) {
+    const el = this._previewLicense;
+    if (!el) return;
+
+    // 直前の取得をキャンセル
+    if (this._metaAbort) {
+      this._metaAbort.abort();
+      this._metaAbort = null;
+    }
+
+    const cached = this._metaCache.get(entry.vrmUrl);
+    if (cached !== undefined) {
+      const { label, url } = formatLicenseFromMeta(cached);
+      this._setLicenseDisplay(label, url);
+      return;
+    }
+
+    el.classList.remove("d-none");
+    el.textContent = "…";
+
+    const ac = new AbortController();
+    this._metaAbort = ac;
+    const selectedKey = entry.key;
+
+    try {
+      const meta = await fetchVrmMeta(entry.vrmUrl, ac.signal);
+      if (this._selected?.key !== selectedKey) return; // 選択が変わっていた
+      this._metaCache.set(entry.vrmUrl, meta);
+      const { label, url } = formatLicenseFromMeta(meta);
+      // メタは読めたがライセンス欄が空のときは何も出さない
+      this._setLicenseDisplay(label, url);
+    } catch (e) {
+      if (e?.name === "AbortError") return;
+      if (this._selected?.key !== selectedKey) return;
+      this._metaCache.set(entry.vrmUrl, null);
+      this._setLicenseDisplay("", null);
+    } finally {
+      if (this._metaAbort === ac) this._metaAbort = null;
+    }
+  }
+
   _select(entry) {
     this._selected = entry;
     for (const [key, card] of this._cards) {
@@ -249,6 +439,9 @@ export class ModelPicker {
       this._previewEmpty.textContent = tr("picker.003");
       this._previewEmpty.classList.remove("d-none");
     }
+
+    // 選択モデルの VRM メタからライセンスを読み、画像の下に表示
+    this._loadAndShowLicense(entry);
   }
 
   async _loadSelected() {
