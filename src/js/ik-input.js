@@ -11,7 +11,7 @@
  * 自分が使う入力だけ他へ伝えない。OrbitControls は、ボーン操作と同じく controls.enabled で止める。
  */
 import * as THREE from "three";
-import { armSegments, IK_CHAINS, SURFACE_OFFSET } from "./ik.js";
+import { IK_CHAINS, isArmHit, SURFACE_OFFSET } from "./ik.js";
 
 export class IkInput {
   /**
@@ -123,7 +123,8 @@ export class IkInput {
       // 表面から外れたとき用の、画面に平行な面(今の目標点を通る)
       plane: this._cameraPlane(target.position),
     };
-    this._ik.beginFollow(vrm, chain);
+    // 置いてある点の丸をつかんで動かすとき(offset がある)は、微調整なので、手のひらの向きを保つ
+    this._ik.beginFollow(vrm, chain, offset != null);
     this._scene.controls.enabled = false;
   }
 
@@ -175,13 +176,9 @@ export class IkInput {
   /** ray が当たる表面(動かしている腕自身は除く)と床のうち、いちばん手前。{ point, normal } か null */
   _pickAt(vrm, chain, p) {
     const ray = this._setRay(p);
-    const segments = armSegments(vrm, chain);
-    const reject = (pt) =>
-      segments.some(([a, b, r]) =>
-        new THREE.Line3(a, b).closestPointToPoint(pt, true, _tmp).distanceTo(
-          pt,
-        ) < r
-      );
+    // 動かしている腕(上腕から指先まで)は、位置ではなくメッシュで見分けて無視する
+    // (手は表面に接しているので、位置で除くと、手の下の体の表面まで除いてしまう)
+    const reject = (_pt, hit) => isArmHit(vrm, chain, hit);
     let best = this._cb.pickPoint(ray, reject);
     const ground = ray.ray.intersectPlane(
       new THREE.Plane(new THREE.Vector3(0, 1, 0), 0),

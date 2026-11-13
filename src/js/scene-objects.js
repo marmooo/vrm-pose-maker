@@ -232,7 +232,7 @@ export class SceneObjects {
     let best = null;
     for (const item of this._items) {
       const hit = raycaster.intersectObject(item.root, true).find((h) =>
-        !reject?.(h.point)
+        !reject?.(h.point, h)
       );
       if (hit && (!best || hit.distance < best.distance)) best = hit;
     }

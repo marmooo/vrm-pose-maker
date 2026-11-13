@@ -64,20 +64,22 @@ function legChain(side, color) {
   };
 }
 export const IK_CHAINS = {
-  leftHand: armChain("left", 0xff8a3d),
-  rightHand: armChain("right", 0x3dc8ff),
+  leftHand: armChain("left", 0x3d6bff),
+  rightHand: armChain("right", 0x3da8ff),
   leftFoot: legChain("left", 0xffd23d),
   rightFoot: legChain("right", 0x7dff6a),
 };
 
 const MARKER_RADIUS = 0.035;
+const MARKER_OPACITY = 0.2; // 目標点の丸の濃さ(手が触れているかを見にくくしないよう、薄く)
 // 解の出発点に使う、目標の手前(面の外側)への距離(m)
 const VIA_DISTANCE = 0.12;
 // 手のメッシュの接触点に合わせて、先端の点をずらす量の上限(m)
 const CONTACT_SHIFT_LIMIT = 0.05;
 const ROLL_CANDIDATES = 12; // 手のひらの回転を自動で選ぶとき、試す向きの数
 const RETRY_ERROR = 0.03; // 今の姿勢から解いて、手の位置がこれ(m)より外れていれば、腕を初期姿勢に戻して解き直してみる
-const STUCK_FRAMES = 8; // 損失がこれだけ続けて大きいと、局所解にはまっているとみなす
+const STUCK_DEPTH = 0.006; // 体への入り込みがこれ(m)より深いまま続けば、はまっているとみなす
+const STUCK_FRAMES = 3; // 損失がこれだけ続けて大きいと、局所解にはまっているとみなす
 const RETRY_INTERVAL = 24; // 解き直しの間隔(フレーム)
 const TRUNK_BONES = ["spine", "chest", "upperChest"];
 const EFFORT_WEIGHT = 0.02; // 関節を動かす量(rad)を、損失(m)に対してどれだけ重く見るか
@@ -708,6 +710,8 @@ const COLLISION_BAND = 0.012;
 const TRUNK_REACH_ERROR = 0.01;
 // 目標がこの距離より体の表面に近ければ、その部位の上にある、とみなす(m)
 const ATTACH_RADIUS = 0.02;
+// 目標点を体の部位につけるとき、当たり判定の形(メッシュより少し内側)からこの距離(m)以内なら、その部位の表面とみなす
+const ANCHOR_RADIUS = 0.05;
 // 手が目標からこれより遠いときは、先に位置だけで解く(m)
 const PRESOLVE_DISTANCE = 0.08;
 // 目標が頭や首の上にあるときの、体幹の動かしやすさ(1 が普通、0 で固定)
@@ -1012,7 +1016,7 @@ function solveCore(vrm, goals, bodySurface) {
   // 目標が頭や首の上にあるときは、体幹を曲げても届きやすくならず、頭ごと目標から逃げてしまうので、体幹は動かさない
   // それ以外の目標では、体幹も普通に使う(体幹を固定した段を挟むと、計算が倍になる)
   let ev, cost;
-  if (isOnTrunkPart(ctx, ts, bodySurface)) {
+  if (goals.some((g) => g.lockTrunk) || isOnTrunkPart(ctx, ts, bodySurface)) {
     const trunkW = params.map((p) => p.w);
     params.forEach((p) => {
       if (p.joint.trunk) p.w = 0;
@@ -1048,6 +1052,7 @@ function solveCore(vrm, goals, bodySurface) {
     posErr: p.posErr,
     cost: p.posErr + p.rotErr * ROT_WEIGHT + ev.maxDepth,
     totalCost: cost,
+    depth: ev.maxDepth, // 体への入り込みの最大(m)
     effort,
   }));
 }
@@ -1136,8 +1141,46 @@ export function armSegments(vrm, chainName) {
   ];
 }
 
+/**
+ * レイの当たり(hit: three のレイキャストの結果)が、その腕(上腕・前腕・手・指)のメッシュかどうか。
+ * 手のひらを置いた点を動かすとき、動かす対象の腕自身に当たって狂わないよう、その腕は無視するために使う。
+ * 表面の位置ではなく、当たった三角形がどのボーンにつくかで見分ける(手は表面に接しているので、位置では体と区別できない)
+ */
+export function isArmHit(vrm, chainName, hit) {
+  const mesh = hit?.object;
+  const face = hit?.face;
+  if (!mesh?.isSkinnedMesh || !face) return false;
+  const side = IK_CHAINS[chainName].side;
+  const names = ["UpperArm", "LowerArm", "Hand"];
+  for (const f of ["Thumb", "Index", "Middle", "Ring", "Little"]) {
+    for (const n of ["Metacarpal", "Proximal", "Intermediate", "Distal"]) {
+      names.push(`${f}${n}`);
+    }
+  }
+  const raw = new Set(
+    names.map((n) => vrm.humanoid.getRawBoneNode(`${side}${n}`)).filter(
+      Boolean,
+    ),
+  );
+  const bones = mesh.skeleton?.bones;
+  const si = mesh.geometry.attributes.skinIndex;
+  const sw = mesh.geometry.attributes.skinWeight;
+  if (!bones || !si || !sw) return false;
+  // 三角形の 3 頂点の、手のボーンへの重みの平均が半分を超えれば、手のメッシュとみなす
+  let w = 0;
+  for (const v of [face.a, face.b, face.c]) {
+    for (let k = 0; k < 4; k++) {
+      if (raw.has(bones[si.getComponent(v, k)])) w += sw.getComponent(v, k);
+    }
+  }
+  return w / 3 > 0.5;
+}
+
 /** モデルごとの IK 目標点と、その印(マーカー)を管理する */
 export class IkManager {
+  /** 微調整(丸をつかんで動かす)の間は、体幹を固定して腕だけで合わせる */
+  fixTrunk = true;
+
   /**
    * @param {THREE.Scene} threeScene マーカーを置くシーン
    * @param {{onChange?:()=>void}} callbacks 目標点や状態が変わったとき
@@ -1170,8 +1213,11 @@ export class IkManager {
   _refreshMarkers() {
     for (const { vrm, chains } of this._states.values()) {
       for (const e of Object.values(chains)) {
-        e.marker.visible = vrm === this._activeVrm;
-        e.marker.material.opacity = e.enabled ? 0.9 : 0.35;
+        // 手が触れているかを見る邪魔にならないよう、丸は薄くする(つかんで動かすのには使える)
+        // 手を置く場所がオフのときは、丸も出さない(消せなくなる)
+        e.marker.visible = vrm === this._activeVrm &&
+          (e.enabled || !!e.deferred);
+        e.marker.material.opacity = e.deferred ? 0.6 : MARKER_OPACITY; // つかんで動かしている間は、見やすく濃くする
       }
     }
   }
@@ -1180,8 +1226,9 @@ export class IkManager {
     const material = new THREE.MeshBasicMaterial({
       color: IK_CHAINS[chain].color,
       transparent: true,
-      opacity: 0.9,
+      opacity: MARKER_OPACITY,
       depthTest: false,
+      depthWrite: false,
     });
     const marker = new THREE.Mesh(this._geometry, material);
     marker.renderOrder = 999;
@@ -1208,6 +1255,7 @@ export class IkManager {
         fingers: ["Index"], // part が "fingers" のとき、触れる指(FINGER_KEYS)
         fingerPoints: null, // 指ごとの接触用の頂点
         fingerBackup: null, // 指で触れる前の、指の姿勢(部位を戻すときに戻す)
+        anchor: null, // 目標点が触れている体の部位。体が動いたら、目標点もついていく
         enabled: true,
         marker: this._makeMarker(chain),
       };
@@ -1224,39 +1272,19 @@ export class IkManager {
     }
     e.handPoints = null;
     e.fingerPoints = null;
+    e.anchor = null;
     // 指の向き(ロール)は、離して確定するまで決めない(それまでは、その手の届きやすい向きに任せる)
     e.fingerBase = e.normal && extra.fingerBase
       ? extra.fingerBase.clone()
       : null;
-    this._updateArrows(e);
     e.enabled = true;
     this._refreshMarkers();
     this._callbacks.onChange?.();
   }
 
-  /** 面の外向きの法線を持たせる(null なら、手のひらの向きは指定しない)。矢印で見せる */
+  /** 面の外向きの法線を持たせる(null なら、手のひらの向きは指定しない) */
   _setNormal(e, normal) {
     e.normal = normal ? normal.clone().normalize() : null;
-    if (e.arrow) {
-      e.marker.remove(e.arrow);
-      e.arrow.dispose?.();
-      e.arrow = null;
-    }
-    if (!e.normal) return;
-    const arrow = new THREE.ArrowHelper(
-      e.normal,
-      new THREE.Vector3(),
-      0.12,
-      IK_CHAINS[e.chain].color,
-      0.04,
-      0.03,
-    );
-    for (const m of [arrow.line.material, arrow.cone.material]) {
-      m.depthTest = false;
-    }
-    arrow.line.renderOrder = arrow.cone.renderOrder = 998;
-    e.marker.add(arrow);
-    e.arrow = arrow;
   }
 
   /**
@@ -1287,48 +1315,103 @@ export class IkManager {
     e.fingerBase ??= this._canonicalBase(vrm, e.normal);
     e.manualRoll = true; // 自分で回したら、自動の推定はもうしない
     e.roll = roll;
-    this._updateArrows(e);
-  }
-
-  /** 指の向きの矢印(細い線)を、ロールに合わせる */
-  _updateArrows(e) {
-    if (e.fingerArrow) {
-      e.marker.remove(e.fingerArrow);
-      e.fingerArrow.dispose?.();
-      e.fingerArrow = null;
-    }
-    const dir = this._fingerDir(e);
-    if (!dir) return;
-    const arrow = new THREE.ArrowHelper(
-      dir,
-      new THREE.Vector3(),
-      0.1,
-      0xffffff,
-      0.03,
-      0.02,
-    );
-    for (const m of [arrow.line.material, arrow.cone.material]) {
-      m.depthTest = false;
-    }
-    arrow.line.renderOrder = arrow.cone.renderOrder = 998;
-    e.marker.add(arrow);
-    e.fingerArrow = arrow;
   }
 
   /** 目標点を追随させ始める。手のひらの回転を自分で決めていなければ、動かしている間は向きを縛らない */
-  beginFollow(vrm, chain) {
+  beginFollow(vrm, chain, refine = false) {
     const e = this._chains(vrm)?.[chain];
-    if (!e || e.manualRoll) return;
+    if (!e) return;
+    // 置いた点を微調整するときは、決めた手のひらの向きを保ったまま動かす(向きまで自由にすると、体が大きく動いてしまう)
+    e.refine = refine && !!e.fingerBase;
+    // 微調整のドラッグ中は丸だけ動かし、手は離したときに動かす(動かしながら解くと、手が体の裏へ回り込むことがある)
+    e.deferred = refine;
+    e.pending = null;
+    this._refreshMarkers();
+    if (e.manualRoll || e.refine) return;
     e.fingerBase = null;
-    this._updateArrows(e);
   }
 
   /** 追随を終える(離した)。手の点を取り直し、手のひらの回転を自分で決めていなければ、いちばん無理のない向きを選ぶ */
   endFollow(vrm, chain) {
     const e = this._chains(vrm)?.[chain];
     if (!e) return;
+    if (e.deferred) {
+      const pending = e.pending;
+      e.deferred = false;
+      e.pending = null;
+      this._refreshMarkers();
+      if (pending) {
+        this.moveTarget(vrm, chain, pending.position, pending.normal);
+      }
+    }
     this._collectPoints(vrm, chain, e);
-    if (e.normal && !e.manualRoll) this.autoRoll(vrm, chain);
+    this._attach(vrm, chain, e); // 体幹につく部位なら、向きを選ぶときも体幹を固定する
+    const refine = e.refine;
+    // 微調整のあとは、今の向きのまま届いていれば、向きは選び直さない(選び直すと、姿勢が大きく変わる)
+    let keep = false;
+    if (refine && e.fingerBase) {
+      this._ensurePoints(vrm, chain, e);
+      const r = solveChains(
+        vrm,
+        [this._goal(chain, e)],
+        this._callbacks.getBodySurface?.(vrm) ?? null,
+      )?.[0];
+      keep = !!r && r.posErr <= RETRY_ERROR && r.depth <= STUCK_DEPTH;
+    }
+    e.refine = false;
+    if (!keep && e.normal && !e.manualRoll) this.autoRoll(vrm, chain);
+    if (e.anchor && e.fingerBase) e.anchor.b0 = e.fingerBase.clone();
+  }
+
+  /**
+   * 目標点を、いちばん近い体の部位につける。その部位が動いたとき(ポーズを変える、モデルを動かす)、目標点もついていく。
+   * 体の表面から離れている(床や物の上など)ときは、つけない(ワールドに固定)
+   */
+  _attach(vrm, chain, e) {
+    e.anchor = null;
+    const bodySurface = this._callbacks.getBodySurface?.(vrm);
+    if (!bodySurface?.length) return;
+    vrm.scene.updateMatrixWorld(true);
+    const side = IK_CHAINS[chain].side;
+    let best = null;
+    let bestName = null;
+    let bestDist = 0;
+    for (const { name, node, offset, shape } of bodySurface) {
+      if (!node || !offset || !name || isOwnPart(name, side)) continue;
+      _m.multiplyMatrices(node.matrixWorld, offset);
+      const r = shape.calculateCollision(_m, e.target, ANCHOR_RADIUS, _dir);
+      if (r < bestDist) {
+        bestDist = r;
+        best = node;
+        bestName = name;
+      }
+    }
+    if (!best) return;
+    const trunk = TRUNK_BONES.map((b) => vrm.humanoid.getNormalizedBoneNode(b))
+      .filter(Boolean);
+    e.anchor = {
+      name: bestName,
+      node: best,
+      trunk: trunk.some((t) => {
+        for (let o = best; o; o = o.parent) if (o === t) return true;
+        return false;
+      }),
+      inv: best.matrixWorld.clone().invert(),
+      p0: e.target.clone(),
+      n0: e.normal?.clone() ?? null,
+      b0: e.fingerBase?.clone() ?? null,
+    };
+  }
+
+  /** 目標点を、つけた体の部位の動きに合わせて動かす */
+  _followAnchor(e) {
+    const a = e.anchor;
+    if (!a || e.deferred) return; // 微調整のドラッグ中は、丸を引き戻さない
+    _m.multiplyMatrices(a.node.matrixWorld, a.inv);
+    e.target.copy(a.p0).applyMatrix4(_m);
+    e.marker.position.copy(e.target);
+    if (a.n0 && e.normal) e.normal.copy(a.n0).transformDirection(_m);
+    if (a.b0 && e.fingerBase) e.fingerBase.copy(a.b0).transformDirection(_m);
   }
 
   /** 接触用の頂点を、今の姿勢で集め直す(部位に合わせて、手のひら側か、指ごと) */
@@ -1502,7 +1585,6 @@ export class IkManager {
     vrm.scene.updateMatrixWorld(true);
     e.fingerBase = base;
     e.roll = best.roll;
-    this._updateArrows(e);
   }
 
   /** 解くための目標(solveChains の goals の 1 つ)を作る */
@@ -1513,6 +1595,8 @@ export class IkManager {
       part: e.part,
       fingers: e.fingers,
       fingerPoints: e.fingerPoints,
+      // 目標が体幹について動く部位につけてあれば、体幹を曲げても届きやすくならず、目標ごと動いてずれていくだけなので、体幹は固定する
+      lockTrunk: !!e.anchor?.trunk || (!!e.refine && this.fixTrunk),
       // 手のひらを面に向けたまま、指を面の上でどちらへ向けるか(ロール)
       target: this._target(e, this._fingerDir(e)),
     };
@@ -1543,8 +1627,14 @@ export class IkManager {
   moveTarget(vrm, chain, position, normal = undefined) {
     const e = this._chains(vrm)?.[chain];
     if (!e) return;
+    if (e.deferred) {
+      e.marker.position.copy(position);
+      e.pending = { position: position.clone(), normal: normal?.clone() };
+      return;
+    }
     e.target.copy(position);
     e.marker.position.copy(position);
+    e.anchor = null; // 動かしている間は、体にはつけない(離したときにつけ直す)
     if (!normal) return;
     this._setNormal(e, normal);
     if (e.fingerBase) {
@@ -1555,7 +1645,6 @@ export class IkManager {
         e.fingerBase.normalize();
       }
     }
-    this._updateArrows(e);
   }
 
   /** 面に触れさせる手の部位を変える(HAND_PARTS のキー)。接触の点を取り直して、向きを選び直す */
@@ -1630,7 +1719,9 @@ export class IkManager {
   activeMarkers() {
     const chains = this._activeVrm && this._chains(this._activeVrm);
     if (!chains) return [];
-    return Object.entries(chains).map(([chain, e]) => ({
+    return Object.entries(chains).filter(([, e]) => e.enabled).map((
+      [chain, e],
+    ) => ({
       chain,
       marker: e.marker,
     }));
@@ -1644,6 +1735,7 @@ export class IkManager {
     if (!active.length) return;
     vrm.scene.updateMatrixWorld(true);
     const bodySurface = this._callbacks.getBodySurface?.(vrm) ?? null;
+    for (const [, e] of active) this._followAnchor(e);
     const goals = active.map(([chain, e]) => {
       this._ensurePoints(vrm, chain, e);
       return this._goal(chain, e);
@@ -1652,7 +1744,9 @@ export class IkManager {
     if (!results) return;
     active.forEach(([chain, e], i) => {
       // 局所解にはまって、ずっと届かないときは、腕を初期姿勢に戻して解き直してみる(間隔をあけて、良くなったときだけ採用)
-      e.stuck = results[i].posErr > RETRY_ERROR ? (e.stuck ?? 0) + 1 : 0;
+      const bad = results[i].posErr > RETRY_ERROR ||
+        results[i].depth > STUCK_DEPTH;
+      e.stuck = bad ? (e.stuck ?? 0) + 1 : 0;
       e.cooldown = Math.max(0, (e.cooldown ?? 0) - 1);
       if (e.stuck >= STUCK_FRAMES && e.cooldown === 0) {
         e.cooldown = RETRY_INTERVAL;
@@ -1663,7 +1757,7 @@ export class IkManager {
           goals,
           bodySurface,
           e,
-          results[i].posErr,
+          results[i].posErr + 2 * results[i].depth,
         );
       }
     });
@@ -1695,7 +1789,13 @@ export class IkManager {
     const saved = keep.map((n) => n.quaternion.clone());
     // 初期姿勢から、そのまま解く → 目標の手前を経由して解く、の順に試す。今より明らかに良くなったときだけ採用する
     let adopted = false;
-    for (const seed of ["rest", "via"]) {
+    // 体幹についた目標は、体幹を動かすと目標ごと動いて、いつまでも届かず揺れ続けるので、体幹は動かさない
+    const seeds = e.anchor?.trunk ? ["rest", "via"] : ["rest", "via", "free"];
+    for (const seed of seeds) {
+      // free: 体幹を固定していると届かないときの最後の手段として、体幹も動かして解く
+      const gs = seed === "free"
+        ? goals.map((g) => ({ ...g, lockTrunk: false }))
+        : goals;
       nodes.forEach((n) => n.quaternion.identity());
       vrm.scene.updateMatrixWorld(true);
       if (seed === "via" && e.normal) {
@@ -1717,9 +1817,12 @@ export class IkManager {
       }
       let results = null;
       for (let pass = 0; pass < 2; pass++) {
-        results = solveChains(vrm, goals, bodySurface);
+        results = solveChains(vrm, gs, bodySurface);
       }
-      if (results && results[index].posErr < currentErr * 0.5) {
+      if (
+        results &&
+        results[index].posErr + 2 * results[index].depth < currentErr * 0.5
+      ) {
         adopted = true;
         break;
       }
@@ -1746,6 +1849,16 @@ export class IkManager {
         manualRoll: e.manualRoll,
         part: e.part,
         fingers: e.fingers,
+        anchor: e.anchor
+          ? {
+            bone: e.anchor.name,
+            trunk: e.anchor.trunk,
+            inv: e.anchor.inv.toArray(),
+            p0: e.anchor.p0.toArray(),
+            n0: e.anchor.n0?.toArray() ?? null,
+            b0: e.anchor.b0?.toArray() ?? null,
+          }
+          : null,
         enabled: e.enabled,
       };
     }
@@ -1773,6 +1886,19 @@ export class IkManager {
             : null,
         },
       );
+      const a = e.anchor;
+      const node = a && vrm.humanoid.getNormalizedBoneNode(a.bone);
+      if (node && Array.isArray(a.inv) && Array.isArray(a.p0)) {
+        this._chains(vrm)[chain].anchor = {
+          name: a.bone,
+          node,
+          trunk: !!a.trunk,
+          inv: new THREE.Matrix4().fromArray(a.inv),
+          p0: new THREE.Vector3().fromArray(a.p0),
+          n0: Array.isArray(a.n0) ? new THREE.Vector3().fromArray(a.n0) : null,
+          b0: Array.isArray(a.b0) ? new THREE.Vector3().fromArray(a.b0) : null,
+        };
+      }
       if (e.enabled === false) this.setEnabled(vrm, chain, false);
     }
   }

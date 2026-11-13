@@ -381,6 +381,34 @@ class App {
           this._syncIkUi();
         },
       );
+      document.getElementById(`ik-part-${chain}`)?.addEventListener(
+        "change",
+        (e) => {
+          if (this._vrm) this._ik.setPart(this._vrm, chain, e.target.value);
+        },
+      );
+      document.getElementById(`ik-fingers-${chain}`)?.addEventListener(
+        "change",
+        (e) => {
+          if (!this._vrm) return;
+          const keys = [
+            ...document.querySelectorAll(
+              `#ik-fingers-${chain} input[data-finger]:checked`,
+            ),
+          ].map((el) => el.dataset.finger);
+          if (!keys.length) {
+            e.target.checked = true; // 触れる指は、最低 1 本
+            return;
+          }
+          this._ik.setFingers(this._vrm, chain, keys);
+        },
+      );
+      document.getElementById("ik-fix-trunk")?.addEventListener(
+        "change",
+        (e) => {
+          this._ik.fixTrunk = e.target.checked;
+        },
+      );
       document.getElementById(`ik-roll-${chain}`)?.addEventListener(
         "input",
         (e) => {
@@ -936,6 +964,19 @@ class App {
         "active",
         placing === chain,
       );
+      const part = document.getElementById(`ik-part-${chain}`);
+      if (part) {
+        part.disabled = !target;
+        part.value = target?.part ?? "center";
+        document.getElementById(`ik-fingers-row-${chain}`)?.classList.toggle(
+          "d-none",
+          part.value !== "fingers",
+        );
+        document.querySelectorAll(`#ik-fingers-${chain} input[data-finger]`)
+          .forEach((el) => {
+            el.checked = target?.fingers?.includes(el.dataset.finger) ?? false;
+          });
+      }
       const roll = document.getElementById(`ik-roll-${chain}`);
       if (roll) {
         roll.disabled = !target?.normal; // 面に置いた手だけ、手のひらを回せる
@@ -959,7 +1000,7 @@ class App {
         if (o.isSkinnedMesh) meshes.push(o);
       });
       const hit = ray.intersectObjects(meshes, false).find((h) =>
-        !reject?.(h.point)
+        !reject?.(h.point, h)
       );
       if (!hit || hit.distance >= bestDist) continue;
       const normal = hit.face
