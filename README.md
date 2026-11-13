@@ -2,8 +2,7 @@
 
 A browser-based tool for posing VRM avatars (bone rotation/position,
 expressions, camera, background) and saving the result. Runs entirely
-client-side (Three.js + `@pixiv/three-vrm`, loaded via CDN `importmap` — no
-build step, no server).
+client-side (Three.js + `@pixiv/three-vrm`.
 
 # Screenshots
 
@@ -34,8 +33,8 @@ Spehere Control ![Sphere Control](screenshots/04.png)
 - Edit the background (color, image or video) and toggle the floor grid.
 - Save / load a pose (`.vrma`), copy / paste a pose via the clipboard, and save
   / load a whole project (`.vrmposer.json`).
-- Take a screenshot (up to ×4, optionally transparent), or shoot a waist-up /
-  full-body transparent PNG (600×800) for the model picker.
+- Screenshot (up to ×4, optional transparent) and fixed-size portrait /
+  full-body PNG captures.
 
 ## Bundled models
 
@@ -49,12 +48,12 @@ src/vrm/1_full_body.png  preview shown when selected (optional)
 ```
 
 ```sh
-deno run --allow-read --allow-write scripts/generate-vrm-list.ts
+deno run -RW scripts/generate-vrm-list.ts
 ```
 
 Thumbnails can be any image format (`png`, `webp`, `avif`, `jpg`, …); the
-footer's "半身撮影" / "全身撮影" buttons save them with these names. Random
-animations use `scripts/generate-animation-list.ts` the same way, and
+footer's "Portrait shot" / "Full-body shot" buttons save them with these names.
+Random animations use `scripts/generate-animation-list.ts` the same way, and
 `scripts/extract-vrm-thumbnail.ts` extracts a VRM's embedded thumbnail. `docs/`
 is the generated site; run `build.sh` after changing `src/`.
 
