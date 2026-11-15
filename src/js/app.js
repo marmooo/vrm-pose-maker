@@ -205,6 +205,17 @@ class App {
     this._ik = new IkManager(this._scene.scene, {
       getBodySurface: (vrm) => this._scene.getBodySurface(vrm),
       withObjectTest: (fn) => this._objects.withInsideTest(fn),
+      // 触れる面のメッシュ(モデルと置いた物)。手の実際のメッシュとの隙間・食い込みを測るのに使う
+      getContactMeshes: () => {
+        const meshes = [];
+        const add = (root) =>
+          root.traverse((o) => {
+            if ((o.isMesh || o.isSkinnedMesh) && o.visible) meshes.push(o);
+          });
+        for (const m of this._models) add(m.vrm.scene);
+        for (const root of this._objects.roots()) add(root);
+        return meshes;
+      },
       onChange: () => this._syncIkUi(),
     });
     this._scene.ik = this._ik;

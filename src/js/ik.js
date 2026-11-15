@@ -13,6 +13,7 @@
  */
 import * as THREE from "three";
 import { getBoneLimit } from "./bone-limits.js";
+import { ContactIndex } from "./contact-index.js";
 
 /**
  * IK で動かせる部位。
@@ -134,6 +135,10 @@ const GRIP_RATIO = {
   Ring: [1, 1, 0.7],
   Little: [1, 1, 0.7],
 };
+// 置いたあと、手のひら(手の骨)の実際のメッシュと、触れる面のメッシュを突き合わせて、隙間・食い込みをなくすように目標点を寄せる
+const REFINE_ITERATIONS = 8; // 寄せて解き直す最大の回数
+const REFINE_TOLERANCE = 0.0004; // これ以下の隙間・食い込みになれば終わり(m)
+const REFINE_RADIUS = 0.12; // 目標点からこの範囲の三角形と頂点だけ調べる(m)
 const GRIP_STEPS = 14; // 指を閉じていくとき、接触を調べる刻み
 const GRIP_BISECT = 5; // 接触した刻みの中を、さらに二分して詰める回数
 const GRIP_POINTS = 30; // 指の骨 1 本あたり、接触の判定に使う頂点の数
@@ -718,7 +723,7 @@ function solveLinear(A, b, n) {
 const _r = new Array(6).fill(0);
 const _dir = new THREE.Vector3();
 const _m = new THREE.Matrix4();
-const COLLISION_MARGIN = 0.003; // 体の表面から、これだけ余分に離す(m)
+const COLLISION_MARGIN = 0.0005; // 体の表面から、これだけ余分に離す(m)
 // 表面の手前この距離までは「近づかない」拘束だけ効かせる。入ったり出たりで拘束が点いたり消えたりして、ぷるぷるするのを防ぐ
 const COLLISION_BAND = 0.012;
 // 腕だけで、これより近くまで届かないときに、体幹も曲げる(m)
@@ -1166,17 +1171,13 @@ export function isArmHit(vrm, chainName, hit) {
   const face = hit?.face;
   if (!mesh?.isSkinnedMesh || !face) return false;
   const side = IK_CHAINS[chainName].side;
-  const names = ["UpperArm", "LowerArm", "Hand"];
-  for (const f of ["Thumb", "Index", "Middle", "Ring", "Little"]) {
-    for (const n of ["Metacarpal", "Proximal", "Intermediate", "Distal"]) {
-      names.push(`${f}${n}`);
-    }
-  }
-  const raw = new Set(
-    names.map((n) => vrm.humanoid.getRawBoneNode(`${side}${n}`)).filter(
-      Boolean,
-    ),
-  );
+  // 腕の付け根の上腕から先にある骨はすべて腕(ひねり補助のボーンも含む)
+  const root = vrm.humanoid.getRawBoneNode(`${side}UpperArm`);
+  if (!root) return false;
+  const inArm = (b) => {
+    for (let o = b; o; o = o.parent) if (o === root) return true;
+    return false;
+  };
   const bones = mesh.skeleton?.bones;
   const si = mesh.geometry.attributes.skinIndex;
   const sw = mesh.geometry.attributes.skinWeight;
@@ -1185,7 +1186,8 @@ export function isArmHit(vrm, chainName, hit) {
   let w = 0;
   for (const v of [face.a, face.b, face.c]) {
     for (let k = 0; k < 4; k++) {
-      if (raw.has(bones[si.getComponent(v, k)])) w += sw.getComponent(v, k);
+      const wk = sw.getComponent(v, k);
+      if (wk > 0 && inArm(bones[si.getComponent(v, k)])) w += wk;
     }
   }
   return w / 3 > 0.5;
@@ -1380,6 +1382,8 @@ export class IkManager {
     }
     e.refine = false;
     if (!keep && e.normal && !e.manualRoll) this.autoRoll(vrm, chain);
+    this._refineContact(vrm, chain, e);
+    this._attach(vrm, chain, e); // 寄せた目標点に合わせて、つけ直す
     if (e.anchor && e.fingerBase) e.anchor.b0 = e.fingerBase.clone();
   }
 
@@ -2083,6 +2087,89 @@ export class IkManager {
         t = Math.min(want, grip.stops[key]);
       }
       this._poseFinger(grip, key, t);
+    }
+  }
+
+  /**
+   * 手の骨(手のひら・甲・掌底。指は除く)の頂点のうち、点 center の近くのものの世界座標。3 つずつ並べた配列
+   */
+  _handBodyPoints(vrm, chain, center) {
+    const spec = IK_CHAINS[chain];
+    const raw = vrm.humanoid.getRawBoneNode(`${spec.side}Hand`);
+    if (!raw) return [];
+    const armRoot = vrm.humanoid.getRawBoneNode(`${spec.side}UpperArm`);
+    const inArm = (b) => {
+      for (let n = b; n; n = n.parent) if (n === armRoot) return true;
+      return false;
+    };
+    const out = [];
+    const v = new THREE.Vector3();
+    vrm.scene.traverse((o) => {
+      if (!o.isSkinnedMesh) return;
+      const si = o.geometry.attributes.skinIndex,
+        sw = o.geometry.attributes.skinWeight;
+      if (!si || !sw) return;
+      o.skeleton.update();
+      for (let i = 0; i < si.count; i++) {
+        let best = 0, bw = -1;
+        for (let k = 0; k < 4; k++) {
+          const w = sw.getComponent(i, k);
+          if (w > bw) {
+            bw = w;
+            best = si.getComponent(i, k);
+          }
+        }
+        const bone = o.skeleton.bones[best];
+        if (
+          bone !== raw &&
+          !(/roll/i.test(bone.name) && /hand/i.test(bone.name) && inArm(bone))
+        ) continue;
+        o.getVertexPosition(i, v).applyMatrix4(o.matrixWorld);
+        if (v.distanceToSquared(center) <= REFINE_RADIUS * REFINE_RADIUS) {
+          out.push(v.x, v.y, v.z);
+        }
+      }
+    });
+    return out;
+  }
+
+  /** 手の骨の頂点と触れる面のメッシュの、面の向きに沿った隙間(正)・食い込み(負)の最小。測れなければ null */
+  _contactGap(vrm, chain, e) {
+    const meshes = this._callbacks.getContactMeshes?.(vrm);
+    if (!meshes?.length) return null;
+    vrm.humanoid.update?.();
+    vrm.scene.updateMatrixWorld(true);
+    const index = new ContactIndex(e.target, REFINE_RADIUS);
+    index.addMeshes(
+      meshes,
+      (mesh, a, b, c) =>
+        isArmHit(vrm, chain, { object: mesh, face: { a, b, c } }),
+    );
+    if (!index.size) return null;
+    const pts = this._handBodyPoints(vrm, chain, e.target);
+    const p = new THREE.Vector3();
+    let gap = Infinity;
+    for (let i = 0; i < pts.length; i += 3) {
+      p.set(pts[i], pts[i + 1], pts[i + 2]);
+      gap = Math.min(gap, index.gapAlong(p, e.normal));
+    }
+    return Number.isFinite(gap) ? gap : null;
+  }
+
+  /**
+   * 置いたあとの仕上げ。手の骨の実際のメッシュが、触れる面のメッシュにぴったり触れる(隙間も食い込みもない)ように、
+   * 目標点を面の向きに沿って寄せて、解き直す。当たり判定の形(メッシュより数 mm 内側)や、解く途中の余裕で残る隙間・食い込みをなくす
+   */
+  _refineContact(vrm, chain, e) {
+    if (!e.normal || e.part === "fingers") return;
+    const bodySurface = this._callbacks.getBodySurface?.(vrm) ?? null;
+    for (let i = 0; i < REFINE_ITERATIONS; i++) {
+      const gap = this._contactGap(vrm, chain, e);
+      if (gap === null || Math.abs(gap) <= REFINE_TOLERANCE) return;
+      e.target.addScaledVector(e.normal, -gap * 0.85);
+      e.marker.position.copy(e.target);
+      this._ensurePoints(vrm, chain, e);
+      solveChains(vrm, [this._goal(chain, e)], bodySurface);
     }
   }
 
