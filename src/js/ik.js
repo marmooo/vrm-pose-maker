@@ -1259,6 +1259,7 @@ export class IkManager {
     if (!IK_CHAINS[chain]) return;
     const chains = this._chains(vrm, true);
     let e = chains[chain];
+    if (e) e.refineId = (e.refineId ?? 0) + 1; // 仕上げの途中なら中止
     if (!e) {
       e = chains[chain] = {
         target: new THREE.Vector3(),
@@ -1342,6 +1343,7 @@ export class IkManager {
   beginFollow(vrm, chain, refine = false) {
     const e = this._chains(vrm)?.[chain];
     if (!e) return;
+    e.refineId = (e.refineId ?? 0) + 1; // 仕上げの途中なら中止
     // 置いた点を微調整するときは、決めた手のひらの向きを保ったまま動かす(向きまで自由にすると、体が大きく動いてしまう)
     e.refine = refine && !!e.fingerBase;
     // 微調整のドラッグ中は丸だけ動かし、手は離したときに動かす(動かしながら解くと、手が体の裏へ回り込むことがある)
@@ -1382,9 +1384,8 @@ export class IkManager {
     }
     e.refine = false;
     if (!keep && e.normal && !e.manualRoll) this.autoRoll(vrm, chain);
+    // 置いた姿勢はすぐ描画させて、接触の仕上げは、そのあとで少しずつ行う(1 回ごとに間をあけて、画面を止めない)
     this._refineContact(vrm, chain, e);
-    this._attach(vrm, chain, e); // 寄せた目標点に合わせて、つけ直す
-    if (e.anchor && e.fingerBase) e.anchor.b0 = e.fingerBase.clone();
   }
 
   /**
@@ -2161,16 +2162,35 @@ export class IkManager {
    * 目標点を面の向きに沿って寄せて、解き直す。当たり判定の形(メッシュより数 mm 内側)や、解く途中の余裕で残る隙間・食い込みをなくす
    */
   _refineContact(vrm, chain, e) {
-    if (!e.normal || e.part === "fingers") return;
-    const bodySurface = this._callbacks.getBodySurface?.(vrm) ?? null;
-    for (let i = 0; i < REFINE_ITERATIONS; i++) {
-      const gap = this._contactGap(vrm, chain, e);
-      if (gap === null || Math.abs(gap) <= REFINE_TOLERANCE) return;
+    const id = e.refineId = (e.refineId ?? 0) + 1;
+    const reattach = () => {
+      this._attach(vrm, chain, e);
+      if (e.anchor && e.fingerBase) e.anchor.b0 = e.fingerBase.clone();
+    };
+    const finish = () => {
+      reattach();
+      this._callbacks.onChange?.();
+    };
+    if (!e.normal || e.part === "fingers") return finish();
+    // 置き直し・ドラッグ・解除などで id が変わったら、そこで中止する
+    const step = (i) => {
+      if (e.refineId !== id || !e.enabled) return;
+      const gap = i < REFINE_ITERATIONS
+        ? this._contactGap(vrm, chain, e)
+        : null;
+      if (gap === null || Math.abs(gap) <= REFINE_TOLERANCE) return finish();
       e.target.addScaledVector(e.normal, -gap * 0.85);
       e.marker.position.copy(e.target);
       this._ensurePoints(vrm, chain, e);
-      solveChains(vrm, [this._goal(chain, e)], bodySurface);
-    }
+      solveChains(
+        vrm,
+        [this._goal(chain, e)],
+        this._callbacks.getBodySurface?.(vrm) ?? null,
+      );
+      reattach(); // 毎回つけ直さないと、体についた目標点が古い位置へ引き戻される
+      setTimeout(() => step(i + 1), 0);
+    };
+    setTimeout(() => step(0), 0);
   }
 
   /** 面に触れさせる手の部位を変える(HAND_PARTS のキー)。接触の点を取り直して、向きを選び直す */
