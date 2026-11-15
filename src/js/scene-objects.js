@@ -36,6 +36,7 @@ export class SceneObjects {
     this._onChange = onChange ?? null;
     this._gizmo = new ObjectGizmo(sceneManager); // キャンバス上の回転・拡大縮小
     this._items = [];
+    this._modelRoot = null; // 物を選んでいないとき、ギズモを出すモデルの root
     this._selectedId = null;
     this._helper = null;
     this._counter = 0;
@@ -204,7 +205,7 @@ export class SceneObjects {
       this._helper.material.dispose();
       this._helper = null;
     }
-    this._gizmo.attach(item?.root ?? null);
+    this._gizmo.attach(item?.root ?? this._modelRoot);
     if (item) {
       this._helper = new THREE.BoxHelper(item.root, HIGHLIGHT_COLOR);
       this._helper.material.depthTest = false;
@@ -342,29 +343,49 @@ export class SceneObjects {
 
   /** ワールドの軸 axis まわりに、物の中心を動かさずに angle(ラジアン)回す。 */
   rotateAboutCenter(axis, angle) {
-    const item = this._items.find((i) => i.id === this._selectedId);
-    if (!item) return;
+    const root = this._gizmoRoot();
+    if (!root) return;
     const center = this._gizmo.center;
     const q = new THREE.Quaternion().setFromAxisAngle(axis, angle);
-    item.root.quaternion.premultiply(q);
-    item.root.position.sub(center).applyQuaternion(q).add(center);
+    root.quaternion.premultiply(q);
+    root.position.sub(center).applyQuaternion(q).add(center);
   }
 
   /** 物の中心を動かさずに、拡大率を scale にする(スライダーと同じ範囲に収める)。 */
   setScaleAboutCenter(scale) {
-    const item = this._items.find((i) => i.id === this._selectedId);
-    if (!item) return;
+    const root = this._gizmoRoot();
+    if (!root) return;
     const next = THREE.MathUtils.clamp(scale, SCALE_MIN, SCALE_MAX);
     const center = this._gizmo.center;
-    const factor = next / item.root.scale.x;
-    item.root.scale.setScalar(next);
-    item.root.position.sub(center).multiplyScalar(factor).add(center);
+    const factor = next / root.scale.x;
+    root.scale.setScalar(next);
+    root.position.sub(center).multiplyScalar(factor).add(center);
+  }
+
+  /** ギズモが付いている(物を選んでいるか、モデルにギズモを出しているか) */
+  get hasGizmoTarget() {
+    return this._selectedId !== null || this._modelRoot !== null;
+  }
+
+  /**
+   * 物を選んでいないとき、モデル(VRM)の root にギズモを出す。null で外す。
+   * 物を選んでいる間は、その物のギズモが優先される。
+   */
+  setModelGizmo(root) {
+    this._modelRoot = root;
+    if (this._selectedId === null) this._gizmo.attach(root);
+  }
+
+  /** ギズモで動かす対象。選んだ物、なければモデル。 */
+  _gizmoRoot() {
+    return this._items.find((i) => i.id === this._selectedId)?.root ??
+      this._modelRoot;
   }
 
   /** ギズモの操作が終わったとき。強調を戻し、パネルのスライダーを今の値に合わせる。 */
   endGizmo() {
     this._gizmo.setActive(null);
-    this._renderControls();
+    this._render(); // パネルのスライダーを今の値に(モデルのときは、app 側が描き直す)
   }
 
   // =========================================================
@@ -412,91 +433,102 @@ export class SceneObjects {
     this._controlsEl.replaceChildren();
     const item = this._items.find((i) => i.id === this._selectedId);
     if (!item) return;
-
-    const slider = (
-      label,
-      min,
-      max,
-      step,
-      value,
-      resetValue,
-      format,
-      onInput,
-    ) => {
-      const wrap = document.createElement("div");
-      wrap.className = "mb-2";
-      const head = document.createElement("div");
-      head.className =
-        "d-flex justify-content-between align-items-center small text-secondary";
-      const name = document.createElement("span");
-      name.textContent = label;
-      const output = document.createElement("span");
-      output.className = "ms-auto me-1";
-      output.textContent = format(value);
-      const reset = document.createElement("button");
-      reset.type = "button";
-      reset.className = "btn btn-sm btn-outline-secondary py-0 px-1";
-      reset.title = tr("obj.008");
-      reset.innerHTML =
-        `<svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="${ICON_SPRITE}#arrow-counterclockwise"/></svg>`;
-      head.append(name, output, reset);
-      const input = document.createElement("input");
-      input.type = "range";
-      input.className = "form-range";
-      Object.assign(input, { min, max, step, value });
-      input.addEventListener("input", () => {
-        const v = Number(input.value);
-        output.textContent = format(v);
-        onInput(v);
-      });
-      reset.addEventListener("click", () => {
-        input.value = String(resetValue);
-        output.textContent = format(resetValue);
-        onInput(resetValue);
-      });
-      wrap.append(head, input);
-      this._controlsEl.append(wrap);
-    };
-
-    slider(
-      tr("obj.002"),
-      SCALE_MIN,
-      SCALE_MAX,
-      0.05,
-      item.root.scale.x,
-      1,
-      (v) => `×${v.toFixed(2)}`,
-      (v) => item.root.scale.setScalar(v),
-    );
-    slider(
-      tr("obj.003"),
-      -180,
-      180,
-      1,
-      Math.round(THREE.MathUtils.radToDeg(item.root.rotation.y)),
-      0,
-      (v) => `${Math.round(v)}°`,
-      (v) => (item.root.rotation.y = THREE.MathUtils.degToRad(v)),
-    );
-    slider(
-      tr("obj.009"),
-      -90,
-      90,
-      1,
-      Math.round(THREE.MathUtils.radToDeg(item.root.rotation.x)),
-      0,
-      (v) => `${Math.round(v)}°`,
-      (v) => (item.root.rotation.x = THREE.MathUtils.degToRad(v)),
-    );
-    slider(
-      tr("obj.010"),
-      -180,
-      180,
-      1,
-      Math.round(THREE.MathUtils.radToDeg(item.root.rotation.z)),
-      0,
-      (v) => `${Math.round(v)}°`,
-      (v) => (item.root.rotation.z = THREE.MathUtils.degToRad(v)),
-    );
+    renderTransformControls(this._controlsEl, item.root);
   }
+}
+
+/**
+ * 拡大率と回転(X / Y / Z)のスライダーを el に描く。物(オブジェクト)にもモデル(VRM)にも使う。
+ * @param {HTMLElement} el
+ * @param {THREE.Object3D} root 動かす対象(足元が原点のグループ。VRM なら vrm.scene)
+ */
+export function renderTransformControls(el, root) {
+  el.replaceChildren();
+  const slider = (
+    label,
+    min,
+    max,
+    step,
+    value,
+    resetValue,
+    format,
+    onInput,
+  ) => {
+    const wrap = document.createElement("div");
+    wrap.className = "mb-2";
+    const head = document.createElement("div");
+    head.className =
+      "d-flex justify-content-between align-items-center small text-secondary";
+    const name = document.createElement("span");
+    name.textContent = label;
+    const output = document.createElement("span");
+    output.className = "ms-auto me-1";
+    output.textContent = format(value);
+    const reset = document.createElement("button");
+    reset.type = "button";
+    reset.className = "btn btn-sm btn-outline-secondary py-0 px-1";
+    reset.title = tr("obj.008");
+    reset.innerHTML =
+      `<svg width="1em" height="1em" fill="currentColor" aria-hidden="true"><use href="${ICON_SPRITE}#arrow-counterclockwise"/></svg>`;
+    head.append(name, output, reset);
+    const input = document.createElement("input");
+    input.type = "range";
+    input.className = "form-range";
+    Object.assign(input, { min, max, step, value });
+    input.addEventListener("input", () => {
+      const v = Number(input.value);
+      output.textContent = format(v);
+      onInput(v);
+    });
+    reset.addEventListener("click", () => {
+      input.value = String(resetValue);
+      output.textContent = format(resetValue);
+      onInput(resetValue);
+    });
+    wrap.append(head, input);
+    el.append(wrap);
+  };
+  const deg = (v) => `${Math.round(v)}°`;
+  const rad = THREE.MathUtils.degToRad;
+  const toDeg = (r) => Math.round(THREE.MathUtils.radToDeg(r));
+  slider(
+    tr("obj.002"),
+    SCALE_MIN,
+    SCALE_MAX,
+    0.05,
+    root.scale.x,
+    1,
+    (v) => `×${v.toFixed(2)}`,
+    (v) => root.scale.setScalar(v),
+  );
+  slider(
+    tr("obj.003"),
+    -180,
+    180,
+    1,
+    toDeg(root.rotation.y),
+    0,
+    deg,
+    (v) => root.rotation.y = rad(v),
+  );
+  slider(
+    tr("obj.009"),
+    -90,
+    90,
+    1,
+    toDeg(root.rotation.x),
+    0,
+    deg,
+    (v) => root.rotation.x = rad(v),
+  );
+  slider(
+    tr("obj.010"),
+    -180,
+    180,
+    1,
+    toDeg(root.rotation.z),
+    0,
+    deg,
+    (v) => root.rotation.z = rad(v),
+  );
 }

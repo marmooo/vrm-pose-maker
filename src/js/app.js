@@ -3,7 +3,7 @@
  */
 import * as THREE from "three";
 import { SceneManager } from "./scene.js";
-import { SceneObjects } from "./scene-objects.js";
+import { renderTransformControls, SceneObjects } from "./scene-objects.js";
 import { VrmLoader } from "./vrm-loader.js";
 import { BONE_LABELS, UIManager } from "./ui.js";
 import { BoneController } from "./bone-control.js";
@@ -134,7 +134,7 @@ class App {
         this._onExpressionChange(name, weight),
     });
 
-    // VRM 以外の 3D オブジェクト(GLB / FBX)。操作(拡大率・回転)は「ボーン回転」タブに出す。
+    // VRM 以外の 3D オブジェクト(GLB / FBX)。操作(拡大率・回転)は「オブジェクト」タブに出す。
     this._objects = new SceneObjects(this._scene, {
       controlsEl: document.getElementById("object-controls"),
       onChange: () => this._syncSelectionUi(),
@@ -147,10 +147,11 @@ class App {
       hasObjectSelection: () => this._objects.selectedId !== null,
       onObjectSelect: (id) => {
         this._objects.select(id);
-        if (id) this._showBoneTab(); // 選んだ物の操作は「ボーン回転」タブに出る
+        if (id) this._showObjectTab(); // 選んだ物の操作は「オブジェクト」タブに出る
       },
       onObjectDrag: (id, dx, dy) => this._objects.translate(id, dx, dy),
       // キャンバス上のギズモ(回転リング・拡大縮小ハンドル)
+      hasObjectGizmo: () => this._objects.hasGizmoTarget,
       hitObjectGizmo: (raycaster) => this._objects.hitGizmo(raycaster),
       onObjectGizmoRotate: (axis, angle) =>
         this._objects.rotateAboutCenter(axis, angle),
@@ -281,14 +282,21 @@ class App {
     // 右パネルのタブ切替（ボーン / 表情 / 背景）
     const tabDefs = [
       { radio: "tab-model", panel: "panel-tab-model" },
-      { radio: "tab-bone", panel: "panel-tab-bone" },
+      { radio: "tab-object", panel: "panel-tab-object", selection: true },
+      { radio: "tab-bone", panel: "panel-tab-bone", selection: true },
       { radio: "tab-expression", panel: "panel-tab-expression" },
       { radio: "tab-material", panel: "panel-tab-material" },
       { radio: "tab-collision", panel: "panel-tab-collision" },
       { radio: "tab-scene", panel: "panel-tab-scene" },
     ];
-    for (const { radio, panel } of tabDefs) {
+    for (const { radio, panel, selection } of tabDefs) {
       document.getElementById(radio)?.addEventListener("change", () => {
+        this._syncModelGizmo(radio);
+        // 選択行(◀ ▶ と削除)は、選んだものを操作するタブ(オブジェクト・ボーン)だけに出す
+        document.getElementById("selection-bar")?.classList.toggle(
+          "d-none",
+          !selection,
+        );
         for (const { panel: p } of tabDefs) {
           const el = document.getElementById(p);
           if (el) {
@@ -878,6 +886,7 @@ class App {
       this._models.push(model);
       this._scene.setVrms(this._models.map((item) => item.vrm));
       model.thumbnail = this._scene.captureFaceThumbnail(vrm);
+      this._showBoneTab(); // VRM を読み込んだら、ボーンタブを開く
       this._activateModel(model.id);
       this._showToast(tr("app.011", file.name), "success");
     } catch (err) {
@@ -1234,7 +1243,7 @@ class App {
   }
 
   // =========================================================
-  // 選択中のモデル・オブジェクト(右パネル「ボーン回転」タブの先頭行)
+  // 選択中のモデル・オブジェクト(右パネル「オブジェクト」「ボーン」タブの先頭行)
   // =========================================================
 
   /** シーンにあるモデルとオブジェクトを、モデル→オブジェクトの順に並べたもの。 */
@@ -1260,6 +1269,19 @@ class App {
     return entries.find((e) =>
       e.kind === "model" && e.id === this._activeModelId
     ) ?? null;
+  }
+
+  /** 「オブジェクト」タブを開いていて、モデルを選んでいるときだけ、モデルに回転・拡大縮小のギズモを出す。 */
+  _syncModelGizmo(radio = null) {
+    if (!this._objects) return;
+    const onObjectTab = radio
+      ? radio === "tab-object"
+      : document.getElementById("tab-object")?.checked;
+    const current = this._currentSelection();
+    const model = onObjectTab && current?.kind === "model"
+      ? this._models.find((m) => m.id === current.id)
+      : null;
+    this._objects.setModelGizmo(model?.vrm.scene ?? null);
   }
 
   _syncSelectionUi() {
@@ -1294,17 +1316,27 @@ class App {
     }
     document.getElementById("selection-remove").disabled = !current;
     this._disarmDelete();
-    // モデルならボーン操作、オブジェクトなら拡大率・回転の操作を出す
+    this._syncModelGizmo();
+    // 「オブジェクト」タブ: モデルでもオブジェクトでも、拡大率・回転の操作を出す
+    if (model) {
+      renderTransformControls(
+        document.getElementById("object-controls"),
+        model.vrm.scene,
+      );
+    } else if (!current) {
+      document.getElementById("object-controls")?.replaceChildren();
+    }
+    // 「ボーン」タブ: ボーンの操作はモデルのときだけ。オブジェクトを選んでいるときは案内を出す
     const showObject = current?.kind === "object";
     for (
       const [id, visible] of [
         ["bone-body", !showObject],
-        ["object-body", showObject],
+        ["bone-hint", showObject],
       ]
     ) {
       const el = document.getElementById(id);
       el?.classList.toggle("d-none", !visible);
-      el?.classList.toggle("d-flex", visible);
+      el?.classList.toggle("d-flex", visible && id === "bone-body");
     }
   }
 
@@ -1322,6 +1354,10 @@ class App {
 
   _selectEntry(entry) {
     if (!entry) return;
+    // 物を選んだら「オブジェクト」タブ、物からモデルに戻ったら「ボーン」タブを開く(モデルからモデルのときは、開いているタブのまま)
+    const before = this._currentSelection()?.kind;
+    if (entry.kind === "object" && before !== "object") this._showObjectTab();
+    if (entry.kind === "model" && before === "object") this._showBoneTab();
     if (entry.kind === "model") {
       this._activateModel(entry.id);
       const model = this._models.find((m) => m.id === entry.id);
@@ -1372,9 +1408,18 @@ class App {
     );
   }
 
-  /** 右パネルを「ボーン回転」タブに切り替える(すでに開いていれば何もしない)。 */
+  /** 右パネルを「ボーン」タブに切り替える(すでに開いていれば何もしない)。 */
   _showBoneTab() {
-    const radio = document.getElementById("tab-bone");
+    this._showTab("tab-bone");
+  }
+
+  /** 右パネルを「オブジェクト」タブ(位置・向き・大きさ)に切り替える。 */
+  _showObjectTab() {
+    this._showTab("tab-object");
+  }
+
+  _showTab(id) {
+    const radio = document.getElementById(id);
     if (radio && !radio.checked) {
       radio.checked = true;
       radio.dispatchEvent(new Event("change"));

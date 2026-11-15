@@ -829,7 +829,7 @@ export class BoneController {
 
   /** ギズモに当たっていれば操作を始めて true を返す。this._raycaster は設定済みであること。 */
   _beginObjectGizmo(clientX, clientY) {
-    if (!this._callbacks.hasObjectSelection?.()) return false;
+    if (!this._callbacks.hasObjectGizmo?.()) return false;
     const hit = this._callbacks.hitObjectGizmo?.(this._raycaster);
     if (!hit) return false;
     if (hit.kind === "rotate") {
