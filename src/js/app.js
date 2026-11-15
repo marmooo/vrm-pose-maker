@@ -204,6 +204,7 @@ class App {
     // 手を指定した場所に置く(IK)。目標点はモデルごとに持ち、画面上の印(丸)をクリック/ドラッグで指定する
     this._ik = new IkManager(this._scene.scene, {
       getBodySurface: (vrm) => this._scene.getBodySurface(vrm),
+      withObjectTest: (fn) => this._objects.withInsideTest(fn),
       onChange: () => this._syncIkUi(),
     });
     this._scene.ik = this._ik;
@@ -421,18 +422,53 @@ class App {
           }
         },
       );
+      document.getElementById(`ik-grip-${chain}`)?.addEventListener(
+        "input",
+        (e) => {
+          if (this._vrm) {
+            this._ik.setGrip(this._vrm, chain, Number(e.target.value) / 100);
+          }
+        },
+      );
+      document.getElementById(`ik-grip-fingers-${chain}`)?.addEventListener(
+        "change",
+        (e) => {
+          if (!this._vrm) return;
+          const keys = [
+            ...document.querySelectorAll(
+              `#ik-grip-fingers-${chain} input[data-grip-finger]:checked`,
+            ),
+          ].map((el) => el.dataset.gripFinger);
+          if (!keys.length) {
+            e.target.checked = true; // 握る指は、最低 1 本
+            return;
+          }
+          this._ik.setGripFingers(this._vrm, chain, keys);
+        },
+      );
+      document.getElementById(`ik-grip-spread-${chain}`)?.addEventListener(
+        "input",
+        (e) => {
+          if (this._vrm) {
+            this._ik.setGripSpread(
+              this._vrm,
+              chain,
+              Number(e.target.value) / 100,
+            );
+          }
+        },
+      );
+      document.querySelector(`[data-ik-grip-auto="${chain}"]`)
+        ?.addEventListener("click", () => {
+          if (this._vrm) this._ik.autoGrip(this._vrm, chain);
+        });
       document.querySelector(`[data-ik-place="${chain}"]`)?.addEventListener(
         "click",
         () => {
-          if (this._vrm) this._ikInput.beginPlacing(chain);
-        },
-      );
-      document.querySelector(`[data-ik-remove="${chain}"]`)?.addEventListener(
-        "click",
-        () => {
           if (!this._vrm) return;
+          // 指定している途中でもう一度押すと、指定をやめる
           if (this._ikInput.placing === chain) this._ikInput.cancelPlacing();
-          this._ik.remove(this._vrm, chain);
+          else this._ikInput.beginPlacing(chain);
         },
       );
     }
@@ -959,7 +995,8 @@ class App {
     for (const chain of IK_UI_CHAINS) {
       const target = this._vrm && this._ik.getTarget(this._vrm, chain);
       const toggle = document.getElementById(`ik-${chain}`);
-      if (toggle) toggle.checked = !!target?.enabled;
+      // 場所を指定している間は、まだ目標点がなくてもオンに見せる(オフにすると指定をやめられる)
+      if (toggle) toggle.checked = !!target?.enabled || placing === chain;
       document.querySelector(`[data-ik-place="${chain}"]`)?.classList.toggle(
         "active",
         placing === chain,
@@ -984,8 +1021,30 @@ class App {
           ((target?.fingerBase ? target.roll : 0) * 180) / Math.PI,
         ); // 自動で選んだ向きも表示する
       }
-      const remove = document.querySelector(`[data-ik-remove="${chain}"]`);
-      if (remove) remove.disabled = !target;
+      const grip = document.getElementById(`ik-grip-${chain}`);
+      if (grip) {
+        // 手のひら側(中心・掌底・甲)で触れた手だけ、握れる
+        grip.disabled = !target?.normal || target.part === "fingers";
+        grip.value = Math.round(this._ik.getGrip(this._vrm, chain) * 100);
+      }
+      const setup = this._vrm && this._ik.getGripSetup(this._vrm, chain);
+      const gripOff = !target?.normal || target.part === "fingers";
+      document.querySelectorAll(
+        `#ik-grip-fingers-${chain} input[data-grip-finger]`,
+      )
+        .forEach((el) => {
+          el.checked = !!setup?.fingers.includes(el.dataset.gripFinger);
+          el.disabled = gripOff;
+        });
+      const spread = document.getElementById(`ik-grip-spread-${chain}`);
+      if (spread) {
+        spread.disabled = gripOff;
+        spread.value = Math.round((setup?.spread ?? 0) * 100);
+      }
+      const gripAuto = document.querySelector(`[data-ik-grip-auto="${chain}"]`);
+      if (gripAuto) {
+        gripAuto.disabled = !target?.normal || target.part === "fingers";
+      }
     }
     document.getElementById("ik-hint")?.classList.toggle("d-none", !placing);
   }

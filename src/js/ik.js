@@ -109,9 +109,9 @@ export const FINGER_KEYS = ["Thumb", "Index", "Middle", "Ring", "Little"];
 /** 指ごとの関節(ボーン名の側より後ろの部分)と、解く軸の重み。曲げの軸だけを使う(親指は 2 軸が連動する) */
 const FINGER_JOINTS = {
   Thumb: [
-    ["ThumbMetacarpal", { x: 0.4, y: 0.2, z: 0.4 }],
-    ["ThumbProximal", { x: 0.5, z: 0.5 }],
-    ["ThumbDistal", { x: 0.5, z: 0.5 }],
+    ["ThumbMetacarpal", { x: 0.3, y: 0.5, z: 0.3 }],
+    ["ThumbProximal", { y: 1 }], // 親指の先の 2 つの関節は、y 軸まわりに曲がる
+    ["ThumbDistal", { y: 1 }],
   ],
   ...Object.fromEntries(
     ["Index", "Middle", "Ring", "Little"].map((f) => [f, [
@@ -126,6 +126,21 @@ const FINGER_POINTS_MAX = 40; // 指の骨 1 本あたりの、接触の判定�
 const AVOID_WEIGHT = 0.6; // 触れない指を、面から逃がすための曲げやすさ(触れる指を 1 として)
 const AVOID_MARGIN = 0.002; // 触れない指を、面からこれだけ離しておく(m)
 const CURL_RATIO = 0.6; // 触れない指を、可動域のどこまで曲げておくか
+// 握る(指を曲げていく)ときの、関節ごとの曲げの割合(可動域の曲げる側の端に対して)。指の先ほど少し浅く曲がる
+const GRIP_RATIO = {
+  Thumb: [1, 1, 1],
+  Index: [1, 1, 0.7],
+  Middle: [1, 1, 0.7],
+  Ring: [1, 1, 0.7],
+  Little: [1, 1, 0.7],
+};
+const GRIP_STEPS = 14; // 指を閉じていくとき、接触を調べる刻み
+const GRIP_BISECT = 5; // 接触した刻みの中を、さらに二分して詰める回数
+const GRIP_POINTS = 30; // 指の骨 1 本あたり、接触の判定に使う頂点の数
+const GRIP_INTERVAL = 150; // 接触を調べ直す間隔(ms)。手のひらの回転をドラッグしている間などに、毎フレーム調べないため
+const THUMB_CANDIDATES = 24; // 親指の姿勢の候補のうち、途中の接触まで調べて比べる数
+const THUMB_PAD_GAP = 0.012; // 親指の腹と、向かい合う指の腹の間に空ける距離(m)
+const GRIP_MARGIN = 0.0005; // 握るとき、体の表面からこれより内側に入ったら接触とする(m)
 
 const MAX_ITERATIONS = 24;
 const STALL_LIMIT = 3; // 誤差がほとんど減らない反復がこれだけ続いたら、打ち切る(届かないとき、毎フレーム回し切らないため)
@@ -1255,6 +1270,8 @@ export class IkManager {
         fingers: ["Index"], // part が "fingers" のとき、触れる指(FINGER_KEYS)
         fingerPoints: null, // 指ごとの接触用の頂点
         fingerBackup: null, // 指で触れる前の、指の姿勢(部位を戻すときに戻す)
+        gripFingers: [...FINGER_KEYS], // 握る指(FINGER_KEYS)。握らない指は、そのまま
+        gripSpread: 0, // 親指の開き(0〜1)。0 で他の指と一緒に閉じ、1 で広げたまま
         anchor: null, // 目標点が触れている体の部位。体が動いたら、目標点もついていく
         enabled: true,
         marker: this._makeMarker(chain),
@@ -1270,6 +1287,7 @@ export class IkManager {
       const keys = FINGER_KEYS.filter((k) => extra.fingers.includes(k));
       if (keys.length) e.fingers = keys;
     }
+    this._clearGrip(vrm, e);
     e.handPoints = null;
     e.fingerPoints = null;
     e.anchor = null;
@@ -1315,6 +1333,7 @@ export class IkManager {
     e.fingerBase ??= this._canonicalBase(vrm, e.normal);
     e.manualRoll = true; // 自分で回したら、自動の推定はもうしない
     e.roll = roll;
+    if (e.grip) e.grip.dirty = true; // 手の向きが変わるので、握りの接触は調べ直す
   }
 
   /** 目標点を追随させ始める。手のひらの回転を自分で決めていなければ、動かしている間は向きを縛らない */
@@ -1346,6 +1365,7 @@ export class IkManager {
     }
     this._collectPoints(vrm, chain, e);
     this._attach(vrm, chain, e); // 体幹につく部位なら、向きを選ぶときも体幹を固定する
+    if (e.grip) e.grip.dirty = true;
     const refine = e.refine;
     // 微調整のあとは、今の向きのまま届いていれば、向きは選び直さない(選び直すと、姿勢が大きく変わる)
     let keep = false;
@@ -1647,11 +1667,431 @@ export class IkManager {
     }
   }
 
+  /** 握る指(FINGER_KEYS のうち 1 本以上)と、親指の開き(0〜1) */
+  getGripSetup(vrm, chain) {
+    const e = this._chains(vrm)?.[chain];
+    return {
+      fingers: e?.gripFingers ?? [...FINGER_KEYS],
+      spread: e?.gripSpread ?? 0,
+    };
+  }
+
+  /** 握る指を決める。握らない指は、握る前の姿勢のままにする */
+  setGripFingers(vrm, chain, keys) {
+    const e = this._chains(vrm)?.[chain];
+    const next = FINGER_KEYS.filter((k) => keys.includes(k));
+    if (!e || !next.length) return;
+    e.gripFingers = next;
+    if (e.grip) e.grip.dirty = true; // 新しく握る指の接触を調べる
+    this._callbacks.onChange?.();
+  }
+
+  /** 親指の開き。大きいほど、親指を広げたまま(0 なら、他の指と同じだけ閉じる) */
+  setGripSpread(vrm, chain, spread) {
+    const e = this._chains(vrm)?.[chain];
+    if (!e) return;
+    e.gripSpread = Math.min(1, Math.max(0, spread));
+    this._callbacks.onChange?.();
+  }
+
+  /** 握りの状態(0〜1)。0 なら握っていない */
+  getGrip(vrm, chain) {
+    return this._chains(vrm)?.[chain]?.grip?.amount ?? 0;
+  }
+
+  /**
+   * 手のひらで触れた手の指を、触れるまで曲げていく(握る)。amount: 0(開く)〜1(触れるまで、または可動域の端まで閉じる)。
+   * 指ごとに、体の表面・床・置いた物に触れたところで止まる。手のひらの位置は動かさず、指の関節だけを変える。
+   */
+  setGrip(vrm, chain, amount) {
+    const e = this._chains(vrm)?.[chain];
+    if (!e || e.part === "fingers") return;
+    const a = Math.min(1, Math.max(0, amount));
+    if (a === 0) {
+      this._clearGrip(vrm, e);
+    } else {
+      e.grip ??= this._initGrip(vrm, chain);
+      e.grip.amount = a;
+    }
+    this._callbacks.onChange?.();
+  }
+
+  /** 触れるまで、いっぱいに握る(接触は調べ直す) */
+  autoGrip(vrm, chain) {
+    const e = this._chains(vrm)?.[chain];
+    if (!e || e.part === "fingers") return;
+    e.grip ??= this._initGrip(vrm, chain);
+    e.grip.amount = 1;
+    e.grip.dirty = true;
+    e.grip.stamp = 0; // すぐ調べ直す
+    this._callbacks.onChange?.();
+  }
+
+  /**
+   * 親指の先の 2 つの関節(第 2・第 1 関節)の、曲げる軸と最大の角度。
+   * 親指は、指と違って y 軸まわりに曲がる(指先が手のひらを横切って小指側へ閉じる)。曲げる側の向きは、可動域の大きいほう
+   * (右手は左手のミラーなので、符号が逆になる)。戻り値は [null, 第 2 関節, 第 1 関節]
+   */
+  _thumbFlex(vrm, side) {
+    const flex = (name) => {
+      if (!vrm.humanoid.getNormalizedBoneNode(`${side}${name}`)) return null;
+      const [lo, hi] = getBoneLimit(`${side}${name}`)?.y ?? [0, 0];
+      const dir = Math.abs(hi) >= Math.abs(lo) ? 1 : -1;
+      return {
+        axis: new THREE.Vector3(0, dir, 0),
+        max: Math.abs(dir > 0 ? hi : lo),
+      };
+    };
+    const prox = flex("ThumbProximal"), dist = flex("ThumbDistal");
+    return prox && dist ? [null, prox, dist] : null;
+  }
+
+  /**
+   * 親指を曲げる向き(x・y・z の可動域の、下端 -1 / 上端 +1 / 動かさない 0)を、実際に曲げてみて決める。
+   * 親指の軸の向きはモデルによって違うので、人差し指の腹にいちばん近づく組み合わせを選ぶ。
+   */
+  _thumbGripDirections(vrm, side, flex) {
+    const names = ["ThumbMetacarpal", "ThumbProximal", "ThumbDistal"];
+    const nodes = names.map((n) =>
+      vrm.humanoid.getNormalizedBoneNode(`${side}${n}`)
+    );
+    const target = vrm.humanoid.getNormalizedBoneNode(
+      `${side}IndexIntermediate`,
+    );
+    if (nodes.some((n) => !n) || !target || !flex) return [-1, 1, 1];
+    const limits = names.map((n) => getBoneLimit(`${side}${n}`));
+    const saved = nodes.map((n) => n.quaternion.clone());
+    vrm.scene.updateMatrixWorld(true);
+    // 狙う点: 人差し指の中節から、手のひら側(PALM_NORMAL)へ指の太さ分だけ出した所(親指の腹が、人差し指の腹と向かい合う位置)
+    const hand = vrm.humanoid.getNormalizedBoneNode(`${side}Hand`);
+    const goal = target.getWorldPosition(new THREE.Vector3());
+    if (hand) {
+      goal.addScaledVector(
+        PALM_NORMAL.clone().transformDirection(hand.matrixWorld),
+        0.012,
+      );
+    }
+    const tip = new THREE.Vector3();
+    let best = [-1, 1, 1], bestDist = Infinity;
+    for (const dx of [-1, 0, 1]) {
+      for (const dy of [-1, 0, 1]) {
+        for (const dz of [-1, 0, 1]) {
+          if (!dx && !dy && !dz) continue;
+          const d = [dx, dy, dz];
+          nodes.forEach((n, i) => {
+            const l = limits[i];
+            const v = (range, dir) =>
+              dir === 0 ? 0 : range?.[dir > 0 ? 1 : 0] ?? 0;
+            // 付け根(0 番目)は x・y・z、その先の 2 つの関節は、手のひら側への曲げの軸で最大まで
+            if (i === 0) {
+              n.quaternion.setFromEuler(
+                _eul.set(
+                  v(l?.x, dx),
+                  v(l?.y, dy),
+                  v(l?.z, dz),
+                  l?.order ?? "XYZ",
+                ),
+              );
+            } else {
+              n.quaternion.setFromAxisAngle(flex[i].axis, flex[i].max);
+            }
+          });
+          nodes[0].updateMatrixWorld(true);
+          // 親指の先(末節の関節から、一つ前の節と同じ向きに少し伸ばした点)が、手のひらに近いか
+          nodes[2].getWorldPosition(tip);
+          tip.addScaledVector(
+            tip.clone().sub(nodes[1].getWorldPosition(_v1)),
+            0.7,
+          );
+          const dist = tip.distanceTo(goal);
+          if (dist < bestDist) {
+            bestDist = dist;
+            best = d;
+          }
+        }
+      }
+    }
+    nodes.forEach((n, i) => n.quaternion.copy(saved[i]));
+    vrm.scene.updateMatrixWorld(true);
+    return best;
+  }
+
+  /**
+   * 親指の「いっぱいに閉じた姿勢」を、他の指(人差し指から順に、握る指のうち最初の 1 本)の指先と向かい合う姿勢にする。
+   * 親指の関節の可動域を粗い格子で試し、指先の腹が相手の指先の腹とちょうど向かい合うものから、触れていない姿勢を選ぶ。
+   * (他の指が物を囲んで止まっていれば、親指もその物の側へ回る。決められなければ、曲げる向きだけを決めた姿勢のまま)
+   */
+  _fitThumb(vrm, chain, e, sweep) {
+    const grip = e.grip;
+    const side = IK_CHAINS[chain].side;
+    const goalKey = ["Index", "Middle", "Ring", "Little"].find((k) =>
+      e.gripFingers.includes(k)
+    );
+    if (!goalKey || grip.joints.Thumb.length !== 3) return;
+    // 他の指を、触れたところまで閉じた姿勢にして、その指先を相手にする
+    for (const k of FINGER_KEYS.slice(1)) {
+      this._poseFinger(grip, k, e.gripFingers.includes(k) ? grip.stops[k] : 0);
+    }
+    const node = (n) => vrm.humanoid.getNormalizedBoneNode(`${side}${n}`);
+    const d = node(`${goalKey}Distal`), m = node(`${goalKey}Intermediate`);
+    if (!d || !m) return;
+    const padOf = (a, b) => {
+      const pa = a.getWorldPosition(new THREE.Vector3());
+      return pa.addScaledVector(pa.clone().sub(b.getWorldPosition(_v1)), 0.7);
+    };
+    const goal = padOf(d, m);
+    const nodes = grip.joints.Thumb.map((j) => j.node);
+    const limits = FINGER_JOINTS.Thumb.map(([n]) =>
+      getBoneLimit(`${side}${n}`)
+    );
+    const flex = grip.thumbFlex; // 握る前の姿勢で決めたもの(親指を動かしたあとの向きで決めると、ずれる)
+    if (!flex) return;
+    const at = (range, u) => range ? range[0] + (range[1] - range[0]) * u : 0;
+    const apply = (c) => {
+      nodes.forEach((n, i) => {
+        const l = limits[i];
+        // 付け根(0 番目)は x・y・z、その先の 2 つの関節は、手のひら側への曲げの軸(最大角の割合 c)
+        if (i === 0) {
+          n.quaternion.setFromEuler(
+            _eul.set(
+              at(l?.x, c[0]),
+              at(l?.y, c[1]),
+              at(l?.z, c[2]),
+              l?.order ?? "XYZ",
+            ),
+          );
+        } else {
+          n.quaternion.setFromAxisAngle(flex[i].axis, flex[i].max * c[2 + i]);
+        }
+      });
+      nodes[0].updateMatrixWorld(true);
+    };
+    const U3 = [0, 1 / 3, 2 / 3, 1], U5 = [0, 0.25, 0.5, 0.75, 1];
+    const cands = [];
+    for (const a of U3) {
+      for (const b of U3) {
+        for (const c of U3) {
+          for (const x of U5) {
+            for (const z of U5) {
+              const prm = [a, b, c, x, z]; // 付け根の x・y・z、第 2 関節・第 1 関節の曲げ
+              apply(prm);
+              const tip = padOf(nodes[2], nodes[1]);
+              cands.push([Math.abs(tip.distanceTo(goal) - THUMB_PAD_GAP), prm]);
+            }
+          }
+        }
+      }
+    }
+    cands.sort((p, q) => p[0] - q[0]);
+    // 上位の候補ごとに、閉じていって止まった姿勢の指先の腹が、相手の指先の腹にどれだけ近いかを比べる
+    // (最後の姿勢が良くても、そこへ行く途中で物にぶつかって止まるものがあるため)
+    let best = null;
+    for (const [, prm] of cands.slice(0, THUMB_CANDIDATES)) {
+      apply(prm);
+      grip.joints.Thumb.forEach((j, i) => j.full.copy(nodes[i].quaternion));
+      const stop = sweep("Thumb");
+      this._poseFinger(grip, "Thumb", stop);
+      // 近さが同じくらいなら、指の関節をよく曲げた(自然な握りの)ほうを選ぶ
+      const gap =
+        Math.abs(padOf(nodes[2], nodes[1]).distanceTo(goal) - THUMB_PAD_GAP) +
+        0.004 * (2 - prm[3] - prm[4]);
+      if (!best || gap < best.gap) {
+        best = { gap, prm };
+      }
+    }
+    if (best) {
+      apply(best.prm);
+      grip.joints.Thumb.forEach((j, i) => j.full.copy(nodes[i].quaternion));
+    }
+    grip.joints.Thumb.forEach((j) => j.node.quaternion.copy(j.base));
+    nodes[0].updateMatrixWorld(true);
+  }
+
+  /** 握る前の指の姿勢と、いっぱいに曲げた姿勢を、関節ごとに控える */
+  _initGrip(vrm, chain) {
+    const side = IK_CHAINS[chain].side;
+    const flip = vrm.meta?.metaVersion === "0" ? -1 : 1;
+    const flexEnd = (r) => {
+      const [lo, hi] = r ?? [0, 0];
+      return Math.abs(lo) > Math.abs(hi) ? lo : hi; // 曲げる側の端
+    };
+    const joints = {};
+    const thumbFlex = this._thumbFlex(vrm, side);
+    const thumbDir = this._thumbGripDirections(vrm, side, thumbFlex);
+    for (const key of FINGER_KEYS) {
+      joints[key] = FINGER_JOINTS[key].map(([name], i) => {
+        const node = vrm.humanoid.getNormalizedBoneNode(`${side}${name}`);
+        if (!node) return null;
+        const limit = getBoneLimit(`${side}${name}`);
+        const r = GRIP_RATIO[key][i];
+        const end = (range, dir) =>
+          (dir === 0 ? 0 : range?.[dir > 0 ? 1 : 0] ?? 0) * r;
+        const full = key === "Thumb"
+          // 親指の付け根(0 番目)は自由に動く。その先の 2 つの関節は、手のひら側への曲げの軸で曲げる
+          ? (i === 0 || !thumbFlex
+            ? new THREE.Quaternion().setFromEuler(
+              _eul.set(
+                end(limit?.x, thumbDir[0]),
+                end(limit?.y, thumbDir[1]),
+                end(limit?.z, thumbDir[2]),
+                limit?.order ?? "XYZ",
+              ),
+            )
+            : new THREE.Quaternion().setFromAxisAngle(
+              thumbFlex[i].axis,
+              thumbFlex[i].max,
+            ))
+          : new THREE.Quaternion().setFromEuler(
+            _eul.set(0, 0, flexEnd(limit?.z) * r * flip, limit?.order ?? "XYZ"),
+          );
+        return { node, base: node.quaternion.clone(), full };
+      }).filter(Boolean);
+    }
+    return {
+      amount: 0,
+      joints,
+      thumbFlex,
+      stops: Object.fromEntries(FINGER_KEYS.map((k) => [k, 1])),
+      dirty: true,
+      stamp: 0,
+    };
+  }
+
+  /** 握りをやめて、握る前の指の姿勢に戻す */
+  _clearGrip(vrm, e) {
+    if (!e.grip) return;
+    for (const list of Object.values(e.grip.joints)) {
+      for (const j of list) j.node.quaternion.copy(j.base);
+    }
+    e.grip = null;
+    vrm.scene.updateMatrixWorld(true);
+  }
+
+  _poseFinger(grip, key, t) {
+    for (const j of grip.joints[key]) {
+      j.node.quaternion.copy(j.base).slerp(j.full, t);
+    }
+    grip.joints[key][0]?.node.updateMatrixWorld(true);
+  }
+
+  /**
+   * 指ごとに、閉じていって最初に触れる所(0〜1)を調べる。触れる相手は、体の表面(自分の腕は除く)・床・置いた物。
+   * 手が動いたとき(離したときや手のひらを回したとき)は、調べ直す。
+   */
+  _computeGripStops(vrm, chain, e) {
+    const grip = e.grip;
+    const side = IK_CHAINS[chain].side;
+    vrm.scene.updateMatrixWorld(true);
+    const sets = collectFingerPoints(vrm, chain, FINGER_KEYS);
+    const bodySurface = this._callbacks.getBodySurface?.(vrm) ?? [];
+    const mats = bodySurface.map((b) =>
+      b.node && b.offset
+        ? new THREE.Matrix4().multiplyMatrices(b.node.matrixWorld, b.offset)
+        : b.bone.matrixWorld
+    );
+    const p = new THREE.Vector3();
+    const run = (inside) => {
+      // 指の点(key の指、骨 b の i 番目)が、何かに入っているか
+      const hitAt = (node, pts, i) => {
+        p.set(pts[i], pts[i + 1], pts[i + 2]).applyMatrix4(node.matrixWorld);
+        if (p.y < -GRIP_MARGIN) return true; // 床
+        for (let k = 0; k < bodySurface.length; k++) {
+          if (isOwnPart(bodySurface[k].name, side)) continue;
+          if (
+            bodySurface[k].shape.calculateCollision(mats[k], p, 0, _dir) <
+              -GRIP_MARGIN
+          ) return true;
+        }
+        return !!inside?.(p);
+      };
+      const strideOf = (pts) =>
+        3 * Math.max(1, Math.floor(pts.length / 3 / GRIP_POINTS));
+      // 開いた姿勢で、もう何かに入っている点。握り始めの接触(手を物に押し当てているなど)は、止める理由にしない
+      const skip = {};
+      for (const key of FINGER_KEYS) {
+        if (!sets?.[key] || !e.gripFingers.includes(key)) continue;
+        this._poseFinger(grip, key, 0);
+        skip[key] = new Set();
+        sets[key].forEach(({ node, pts }, b) => {
+          for (let i = 0; i < pts.length; i += strideOf(pts)) {
+            if (hitAt(node, pts, i)) skip[key].add(b * 1e6 + i);
+          }
+        });
+      }
+      const collides = (key) => {
+        const ignore = skip[key];
+        let b = 0;
+        for (const { node, pts } of sets?.[key] ?? []) {
+          for (let i = 0; i < pts.length; i += strideOf(pts)) {
+            if (ignore?.has(b * 1e6 + i)) continue;
+            if (hitAt(node, pts, i)) return true;
+          }
+          b++;
+        }
+        return false;
+      };
+      // 指を閉じていき、最初に触れる所(0〜1)を返す
+      const sweep = (key) => {
+        let lo = 0, hi = -1;
+        for (let i = 1; i <= GRIP_STEPS; i++) {
+          this._poseFinger(grip, key, i / GRIP_STEPS);
+          if (collides(key)) {
+            hi = i / GRIP_STEPS;
+            break;
+          }
+          lo = i / GRIP_STEPS;
+        }
+        if (hi < 0) return 1;
+        for (let i = 0; i < GRIP_BISECT; i++) {
+          const mid = (lo + hi) / 2;
+          this._poseFinger(grip, key, mid);
+          if (collides(key)) hi = mid;
+          else lo = mid;
+        }
+        return lo;
+      };
+      // 親指は、他の指が閉じた姿勢が決まってから、その指先へ向かい合わせるので、最後にする
+      for (const key of [...FINGER_KEYS.slice(1), "Thumb"]) {
+        if (!sets?.[key] || !e.gripFingers.includes(key)) {
+          grip.stops[key] = 1;
+          continue;
+        }
+        if (key === "Thumb") this._fitThumb(vrm, chain, e, sweep);
+        grip.stops[key] = sweep(key);
+      }
+    };
+    const withObjects = this._callbacks.withObjectTest;
+    if (withObjects) withObjects(run);
+    else run(null);
+    grip.dirty = false;
+    grip.stamp = performance.now();
+  }
+
+  /** 握りの姿勢を、指の関節に書く。vrm.update の前に呼ぶ */
+  _applyGrip(vrm, chain, e) {
+    const grip = e.grip;
+    if (!grip) return;
+    if (grip.dirty && performance.now() - grip.stamp > GRIP_INTERVAL) {
+      this._computeGripStops(vrm, chain, e);
+    }
+    for (const key of FINGER_KEYS) {
+      let t = 0;
+      if (e.gripFingers.includes(key)) {
+        const want = key === "Thumb"
+          ? grip.amount * (1 - e.gripSpread)
+          : grip.amount;
+        t = Math.min(want, grip.stops[key]);
+      }
+      this._poseFinger(grip, key, t);
+    }
+  }
+
   /** 面に触れさせる手の部位を変える(HAND_PARTS のキー)。接触の点を取り直して、向きを選び直す */
   setPart(vrm, chain, part) {
     const e = this._chains(vrm)?.[chain];
     if (!e || !HAND_PARTS[part] || e.part === part) return;
     const was = e.part;
+    if (part === "fingers") this._clearGrip(vrm, e); // 指で触れるときは、握りは使わない
     e.part = part;
     if (part === "fingers") this._prepareFingers(vrm, chain, e);
     else if (was === "fingers") this._restoreFingers(vrm, e);
@@ -1761,6 +2201,8 @@ export class IkManager {
         );
       }
     });
+    // 握り: 手の姿勢が決まったあとで、指を曲げる
+    for (const [chain, e] of active) this._applyGrip(vrm, chain, e);
   }
 
   /** 腕を初期姿勢に戻して解き直し、今より明らかに良くなったときだけ、その姿勢にする */

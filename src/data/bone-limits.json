@@ -712,23 +712,23 @@
       "x": {
         "range": [
           -10,
-          30
+          40
         ],
-        "motion": "flexion(+) toward palm / extension(-)"
+        "motion": "moves toward the palm normal(+) (palmar, coupled with Z)"
       },
       "y": {
         "range": [
           -20,
-          30
+          40
         ],
-        "motion": "palmar abduction(-: forward, away from index)/opposition(+)"
+        "motion": "adduction across the palm toward the little finger(+) / abduction(-)"
       },
       "z": {
         "range": [
-          -30,
+          -40,
           10
         ],
-        "motion": "flexion(-) toward palm (coupled with X)"
+        "motion": "moves toward the palm normal(-) (palmar, coupled with X)"
       }
     },
     "leftThumbProximal": {
@@ -736,23 +736,23 @@
       "x": {
         "range": [
           -5,
-          40
+          10
         ],
-        "motion": "flexion(+)"
+        "motion": "small play toward the palm normal(+)"
       },
       "y": {
         "range": [
           -10,
-          10
+          70
         ],
-        "motion": "abduction"
+        "motion": "MCP flexion(+): the thumb closes across the palm"
       },
       "z": {
         "range": [
-          -40,
-          10
+          -10,
+          5
         ],
-        "motion": "flexion(-) (coupled with X)"
+        "motion": "small play toward the palm normal(-)"
       }
     },
     "leftThumbDistal": {
@@ -760,23 +760,23 @@
       "x": {
         "range": [
           -5,
-          30
+          5
         ],
-        "motion": "flexion(+)"
+        "motion": "small play"
       },
       "y": {
+        "range": [
+          -10,
+          80
+        ],
+        "motion": "IP flexion(+): the thumb tip closes across the palm"
+      },
+      "z": {
         "range": [
           -5,
           5
         ],
-        "motion": "unused"
-      },
-      "z": {
-        "range": [
-          -60,
-          5
-        ],
-        "motion": "IP flexion(-) (coupled with X)"
+        "motion": "small play"
       }
     }
   }

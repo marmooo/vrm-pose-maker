@@ -227,6 +227,48 @@ export class SceneObjects {
     return best;
   }
 
+  /**
+   * 置いてある物の内側にあるかを調べる関数 inside(点) を作り、fn に渡して呼ぶ(握るときの、指と物の接触の判定に使う)。
+   * 閉じたメッシュを前提に、点から上へ伸ばしたレイが面と交わる回数の偶奇で決める。裏面も数えるため、判定の間だけ両面にする。
+   */
+  withInsideTest(fn) {
+    const items = this._items.map((item) => {
+      const meshes = [];
+      item.root.traverse((o) => o.isMesh && meshes.push(o));
+      return {
+        root: item.root,
+        meshes,
+        box: new THREE.Box3().setFromObject(item.root),
+      };
+    });
+    const sides = new Map();
+    for (const { meshes } of items) {
+      for (const m of meshes) {
+        for (const mat of [m.material].flat()) {
+          if (mat && !sides.has(mat)) {
+            sides.set(mat, mat.side);
+            mat.side = THREE.DoubleSide;
+          }
+        }
+      }
+    }
+    const ray = new THREE.Raycaster();
+    ray.ray.direction.set(0, 1, 0);
+    const inside = (p) => {
+      for (const { root, box } of items) {
+        if (!box.containsPoint(p)) continue;
+        ray.ray.origin.copy(p);
+        if (ray.intersectObject(root, true).length % 2 === 1) return true;
+      }
+      return false;
+    };
+    try {
+      return fn(items.length ? inside : null);
+    } finally {
+      for (const [mat, side] of sides) mat.side = side;
+    }
+  }
+
   /** レイが当たる一番手前の物の表面の点と向き({ point, normal })。当たらなければ null。reject(点) が true の当たりは除く。 */
   pickPoint(raycaster, reject = null) {
     let best = null;

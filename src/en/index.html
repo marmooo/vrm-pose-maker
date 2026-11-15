@@ -359,7 +359,6 @@
                 <label class="form-check-label small" for="ik-leftHand">Left hand</label>
               </div>
               <button type="button" class="btn btn-sm btn-outline-secondary" data-ik-place="leftHand" title="Press and drag over the canvas to choose where the hand goes">Set target</button>
-              <button type="button" class="btn-close" data-ik-remove="leftHand" title="Remove" aria-label="Remove"></button>
             </div>
             <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="Which part of the hand touches the surface. Palm (center) is for gripping, heel of palm is for striking with the lower palm, back of hand is for touching with the back.">
               <label class="small text-secondary text-nowrap" for="ik-part-leftHand">Touching part</label>
@@ -388,13 +387,35 @@
               <label class="small text-secondary text-nowrap" for="ik-roll-leftHand">Palm rotation</label>
               <input type="range" class="form-range" id="ik-roll-leftHand" min="-180" max="180" step="1" value="0" disabled>
             </div>
+            <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="Closes the fingers from the palm. Each finger stops when it touches the body, the floor or an object. Only for hands touching with the palm, heel or back of the hand.">
+              <label class="small text-secondary text-nowrap" for="ik-grip-leftHand">Grip</label>
+              <input type="range" class="form-range" id="ik-grip-leftHand" min="0" max="100" step="1" value="0" disabled>
+              <button type="button" class="btn btn-sm btn-outline-secondary text-nowrap" data-ik-grip-auto="leftHand" title="Close the fingers until they touch" disabled>Auto</button>
+            </div>
+            <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="Fingers to grip with (1 = thumb … 5 = little)">
+              <div class="btn-group btn-group-sm" role="group" id="ik-grip-fingers-leftHand">
+                <input type="checkbox" class="btn-check" id="ik-grip-finger-leftHand-Thumb" data-grip-finger="Thumb" autocomplete="off" checked>
+                <label class="btn btn-outline-secondary" for="ik-grip-finger-leftHand-Thumb" title="Thumb">1</label>
+                <input type="checkbox" class="btn-check" id="ik-grip-finger-leftHand-Index" data-grip-finger="Index" autocomplete="off" checked>
+                <label class="btn btn-outline-secondary" for="ik-grip-finger-leftHand-Index" title="Index finger">2</label>
+                <input type="checkbox" class="btn-check" id="ik-grip-finger-leftHand-Middle" data-grip-finger="Middle" autocomplete="off" checked>
+                <label class="btn btn-outline-secondary" for="ik-grip-finger-leftHand-Middle" title="Middle finger">3</label>
+                <input type="checkbox" class="btn-check" id="ik-grip-finger-leftHand-Ring" data-grip-finger="Ring" autocomplete="off" checked>
+                <label class="btn btn-outline-secondary" for="ik-grip-finger-leftHand-Ring" title="Ring finger">4</label>
+                <input type="checkbox" class="btn-check" id="ik-grip-finger-leftHand-Little" data-grip-finger="Little" autocomplete="off" checked>
+                <label class="btn btn-outline-secondary" for="ik-grip-finger-leftHand-Little" title="Little finger">5</label>
+              </div>
+            </div>
+            <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="How wide the thumb stays open. 0 closes it with the other fingers; higher keeps it open wider.">
+              <label class="small text-secondary text-nowrap" for="ik-grip-spread-leftHand">Thumb spread</label>
+              <input type="range" class="form-range" id="ik-grip-spread-leftHand" min="0" max="100" step="1" value="0" disabled>
+            </div>
             <div class="d-flex align-items-center gap-2 mb-2">
               <div class="form-check form-switch mb-0 flex-grow-1">
                 <input class="form-check-input" type="checkbox" role="switch" id="ik-rightHand">
                 <label class="form-check-label small" for="ik-rightHand">Right hand</label>
               </div>
               <button type="button" class="btn btn-sm btn-outline-secondary" data-ik-place="rightHand" title="Press and drag over the canvas to choose where the hand goes">Set target</button>
-              <button type="button" class="btn-close" data-ik-remove="rightHand" title="Remove" aria-label="Remove"></button>
             </div>
             <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="Which part of the hand touches the surface. Palm (center) is for gripping, heel of palm is for striking with the lower palm, back of hand is for touching with the back.">
               <label class="small text-secondary text-nowrap" for="ik-part-rightHand">Touching part</label>
@@ -422,6 +443,29 @@
             <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="Turns which way the fingers point while the palm stays on the surface. Only for hands placed on a surface.">
               <label class="small text-secondary text-nowrap" for="ik-roll-rightHand">Palm rotation</label>
               <input type="range" class="form-range" id="ik-roll-rightHand" min="-180" max="180" step="1" value="0" disabled>
+            </div>
+            <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="Closes the fingers from the palm. Each finger stops when it touches the body, the floor or an object. Only for hands touching with the palm, heel or back of the hand.">
+              <label class="small text-secondary text-nowrap" for="ik-grip-rightHand">Grip</label>
+              <input type="range" class="form-range" id="ik-grip-rightHand" min="0" max="100" step="1" value="0" disabled>
+              <button type="button" class="btn btn-sm btn-outline-secondary text-nowrap" data-ik-grip-auto="rightHand" title="Close the fingers until they touch" disabled>Auto</button>
+            </div>
+            <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="Fingers to grip with (1 = thumb … 5 = little)">
+              <div class="btn-group btn-group-sm" role="group" id="ik-grip-fingers-rightHand">
+                <input type="checkbox" class="btn-check" id="ik-grip-finger-rightHand-Thumb" data-grip-finger="Thumb" autocomplete="off" checked>
+                <label class="btn btn-outline-secondary" for="ik-grip-finger-rightHand-Thumb" title="Thumb">1</label>
+                <input type="checkbox" class="btn-check" id="ik-grip-finger-rightHand-Index" data-grip-finger="Index" autocomplete="off" checked>
+                <label class="btn btn-outline-secondary" for="ik-grip-finger-rightHand-Index" title="Index finger">2</label>
+                <input type="checkbox" class="btn-check" id="ik-grip-finger-rightHand-Middle" data-grip-finger="Middle" autocomplete="off" checked>
+                <label class="btn btn-outline-secondary" for="ik-grip-finger-rightHand-Middle" title="Middle finger">3</label>
+                <input type="checkbox" class="btn-check" id="ik-grip-finger-rightHand-Ring" data-grip-finger="Ring" autocomplete="off" checked>
+                <label class="btn btn-outline-secondary" for="ik-grip-finger-rightHand-Ring" title="Ring finger">4</label>
+                <input type="checkbox" class="btn-check" id="ik-grip-finger-rightHand-Little" data-grip-finger="Little" autocomplete="off" checked>
+                <label class="btn btn-outline-secondary" for="ik-grip-finger-rightHand-Little" title="Little finger">5</label>
+              </div>
+            </div>
+            <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="How wide the thumb stays open. 0 closes it with the other fingers; higher keeps it open wider.">
+              <label class="small text-secondary text-nowrap" for="ik-grip-spread-rightHand">Thumb spread</label>
+              <input type="range" class="form-range" id="ik-grip-spread-rightHand" min="0" max="100" step="1" value="0" disabled>
             </div>
             <div class="form-check form-switch mb-2" title="While you drag a dot to fine-tune it, only the arm moves and the body stays put.">
               <input class="form-check-input" type="checkbox" role="switch" id="ik-fix-trunk" checked>

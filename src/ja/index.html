@@ -359,7 +359,6 @@
                 <label class="form-check-label small" for="ik-leftHand">左手</label>
               </div>
               <button type="button" class="btn btn-sm btn-outline-secondary" data-ik-place="leftHand" title="押したまま画面の上を動かして、手を置く場所を決めます">場所を指定</button>
-              <button type="button" class="btn-close" data-ik-remove="leftHand" title="削除" aria-label="削除"></button>
             </div>
             <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="手のどこを面に当てるかを選びます。手のひら(中心)は物を握るとき、掌底は打撃のように手のひらの下側を当てるとき、手の甲は甲で触れるときに使います。">
               <label class="small text-secondary text-nowrap" for="ik-part-leftHand">触れる部位</label>
@@ -388,13 +387,35 @@
               <label class="small text-secondary text-nowrap" for="ik-roll-leftHand">手のひらの回転</label>
               <input type="range" class="form-range" id="ik-roll-leftHand" min="-180" max="180" step="1" value="0" disabled>
             </div>
+            <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="手のひらで触れた手の指を曲げていきます。指ごとに、体・床・置いた物に触れたところで止まります。手のひら・掌底・手の甲で触れた手だけで使えます。">
+              <label class="small text-secondary text-nowrap" for="ik-grip-leftHand">握る</label>
+              <input type="range" class="form-range" id="ik-grip-leftHand" min="0" max="100" step="1" value="0" disabled>
+              <button type="button" class="btn btn-sm btn-outline-secondary text-nowrap" data-ik-grip-auto="leftHand" title="触れるまで指を閉じる" disabled>自動</button>
+            </div>
+            <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="握る指(1 = 親指 … 5 = 小指)">
+              <div class="btn-group btn-group-sm" role="group" id="ik-grip-fingers-leftHand">
+                <input type="checkbox" class="btn-check" id="ik-grip-finger-leftHand-Thumb" data-grip-finger="Thumb" autocomplete="off" checked>
+                <label class="btn btn-outline-secondary" for="ik-grip-finger-leftHand-Thumb" title="親指">1</label>
+                <input type="checkbox" class="btn-check" id="ik-grip-finger-leftHand-Index" data-grip-finger="Index" autocomplete="off" checked>
+                <label class="btn btn-outline-secondary" for="ik-grip-finger-leftHand-Index" title="人差し指">2</label>
+                <input type="checkbox" class="btn-check" id="ik-grip-finger-leftHand-Middle" data-grip-finger="Middle" autocomplete="off" checked>
+                <label class="btn btn-outline-secondary" for="ik-grip-finger-leftHand-Middle" title="中指">3</label>
+                <input type="checkbox" class="btn-check" id="ik-grip-finger-leftHand-Ring" data-grip-finger="Ring" autocomplete="off" checked>
+                <label class="btn btn-outline-secondary" for="ik-grip-finger-leftHand-Ring" title="薬指">4</label>
+                <input type="checkbox" class="btn-check" id="ik-grip-finger-leftHand-Little" data-grip-finger="Little" autocomplete="off" checked>
+                <label class="btn btn-outline-secondary" for="ik-grip-finger-leftHand-Little" title="小指">5</label>
+              </div>
+            </div>
+            <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="親指をどれだけ広げたままにするか。0 なら他の指と一緒に閉じ、大きいほど広げたままになります。">
+              <label class="small text-secondary text-nowrap" for="ik-grip-spread-leftHand">親指の開き</label>
+              <input type="range" class="form-range" id="ik-grip-spread-leftHand" min="0" max="100" step="1" value="0" disabled>
+            </div>
             <div class="d-flex align-items-center gap-2 mb-2">
               <div class="form-check form-switch mb-0 flex-grow-1">
                 <input class="form-check-input" type="checkbox" role="switch" id="ik-rightHand">
                 <label class="form-check-label small" for="ik-rightHand">右手</label>
               </div>
               <button type="button" class="btn btn-sm btn-outline-secondary" data-ik-place="rightHand" title="押したまま画面の上を動かして、手を置く場所を決めます">場所を指定</button>
-              <button type="button" class="btn-close" data-ik-remove="rightHand" title="削除" aria-label="削除"></button>
             </div>
             <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="手のどこを面に当てるかを選びます。手のひら(中心)は物を握るとき、掌底は打撃のように手のひらの下側を当てるとき、手の甲は甲で触れるときに使います。">
               <label class="small text-secondary text-nowrap" for="ik-part-rightHand">触れる部位</label>
@@ -422,6 +443,29 @@
             <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="手のひらを面に向けたまま、指を面の上でどちらへ向けるかを回します。面に置いた手だけで使えます。">
               <label class="small text-secondary text-nowrap" for="ik-roll-rightHand">手のひらの回転</label>
               <input type="range" class="form-range" id="ik-roll-rightHand" min="-180" max="180" step="1" value="0" disabled>
+            </div>
+            <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="手のひらで触れた手の指を曲げていきます。指ごとに、体・床・置いた物に触れたところで止まります。手のひら・掌底・手の甲で触れた手だけで使えます。">
+              <label class="small text-secondary text-nowrap" for="ik-grip-rightHand">握る</label>
+              <input type="range" class="form-range" id="ik-grip-rightHand" min="0" max="100" step="1" value="0" disabled>
+              <button type="button" class="btn btn-sm btn-outline-secondary text-nowrap" data-ik-grip-auto="rightHand" title="触れるまで指を閉じる" disabled>自動</button>
+            </div>
+            <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="握る指(1 = 親指 … 5 = 小指)">
+              <div class="btn-group btn-group-sm" role="group" id="ik-grip-fingers-rightHand">
+                <input type="checkbox" class="btn-check" id="ik-grip-finger-rightHand-Thumb" data-grip-finger="Thumb" autocomplete="off" checked>
+                <label class="btn btn-outline-secondary" for="ik-grip-finger-rightHand-Thumb" title="親指">1</label>
+                <input type="checkbox" class="btn-check" id="ik-grip-finger-rightHand-Index" data-grip-finger="Index" autocomplete="off" checked>
+                <label class="btn btn-outline-secondary" for="ik-grip-finger-rightHand-Index" title="人差し指">2</label>
+                <input type="checkbox" class="btn-check" id="ik-grip-finger-rightHand-Middle" data-grip-finger="Middle" autocomplete="off" checked>
+                <label class="btn btn-outline-secondary" for="ik-grip-finger-rightHand-Middle" title="中指">3</label>
+                <input type="checkbox" class="btn-check" id="ik-grip-finger-rightHand-Ring" data-grip-finger="Ring" autocomplete="off" checked>
+                <label class="btn btn-outline-secondary" for="ik-grip-finger-rightHand-Ring" title="薬指">4</label>
+                <input type="checkbox" class="btn-check" id="ik-grip-finger-rightHand-Little" data-grip-finger="Little" autocomplete="off" checked>
+                <label class="btn btn-outline-secondary" for="ik-grip-finger-rightHand-Little" title="小指">5</label>
+              </div>
+            </div>
+            <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="親指をどれだけ広げたままにするか。0 なら他の指と一緒に閉じ、大きいほど広げたままになります。">
+              <label class="small text-secondary text-nowrap" for="ik-grip-spread-rightHand">親指の開き</label>
+              <input type="range" class="form-range" id="ik-grip-spread-rightHand" min="0" max="100" step="1" value="0" disabled>
             </div>
             <div class="form-check form-switch mb-2" title="丸をつかんで微調整している間は、体は動かさず腕だけで合わせます。">
               <input class="form-check-input" type="checkbox" role="switch" id="ik-fix-trunk" checked>

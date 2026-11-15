@@ -27,7 +27,7 @@ export class IkInput {
     this._ik = ik;
     this._cb = callbacks;
     this._placing = null; // 目標点を置く最中の部位
-    this._drag = null; // { chain, plane, offset }
+    this._drag = null; // { chain, offset }
     this._pending = null; // 追随の更新待ち(画面の更新ごとに1回だけ処理する)
     this._raycaster = new THREE.Raycaster();
     this._ndc = new THREE.Vector2();
@@ -95,6 +95,8 @@ export class IkInput {
       // (カメラ回転は OrbitControls が別の入力で受けるので、controls.enabled で止める)
       const chain = this._placing;
       const placed = this._placementPoint(vrm, chain, p);
+      // 何もない所は、奥行きが決まらず届かないことも多いので、置かない(指定は続ける。カメラの操作はそのまま通す)
+      if (!placed) return;
       this._ik.setTarget(vrm, chain, placed.point, placed.normal);
       this._beginDrag(chain, null);
       this._swallow(e);
@@ -116,12 +118,9 @@ export class IkInput {
 
   _beginDrag(chain, offset) {
     const vrm = this._cb.getVrm();
-    const target = this._ik.getTarget(vrm, chain);
     this._drag = {
       chain,
       offset: offset ?? new THREE.Vector3(),
-      // 表面から外れたとき用の、画面に平行な面(今の目標点を通る)
-      plane: this._cameraPlane(target.position),
     };
     // 置いてある点の丸をつかんで動かすとき(offset がある)は、微調整なので、手のひらの向きを保つ
     this._ik.beginFollow(vrm, chain, offset != null);
@@ -150,15 +149,9 @@ export class IkInput {
         picked.point.clone().addScaledVector(picked.normal, SURFACE_OFFSET),
         picked.normal,
       );
-      this._drag.plane = this._cameraPlane(picked.point); // 表面から外れたときの面は、最後の表面の奥行き
       this._drag.offset.set(0, 0, 0);
-    } else {
-      const at = this._setRay(p).ray.intersectPlane(
-        this._drag.plane,
-        new THREE.Vector3(),
-      );
-      if (at) this._ik.moveTarget(vrm, chain, at.add(this._drag.offset));
     }
+    // 表面や床に当たらない所(何もない所)では、動かさない。最後に当たった所のまま
   }
 
   _onUp() {
@@ -191,7 +184,7 @@ export class IkInput {
     return best;
   }
 
-  /** 押した場所から、目標点を決める。表面に当たらなければ、今の手足の先を通る、画面に平行な面の上(向きなし) */
+  /** 押した場所から、目標点を決める。表面や床に当たらなければ null(何もない所には置かない) */
   _placementPoint(vrm, chain, p) {
     const best = this._pickAt(vrm, chain, p);
     if (best) {
@@ -200,16 +193,7 @@ export class IkInput {
         normal: best.normal,
       };
     }
-    const ray = this._setRay(p);
-    const end = vrm.humanoid.getNormalizedBoneNode(IK_CHAINS[chain].end);
-    const endPos = end.getWorldPosition(new THREE.Vector3());
-    return {
-      point: ray.ray.intersectPlane(
-        this._cameraPlane(endPos),
-        new THREE.Vector3(),
-      ) ?? endPos,
-      normal: null,
-    };
+    return null;
   }
 }
 
