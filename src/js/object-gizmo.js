@@ -15,7 +15,7 @@ const AXES = {
   y: { color: 0x55dd77, vector: new THREE.Vector3(0, 1, 0) },
   z: { color: 0x5588ff, vector: new THREE.Vector3(0, 0, 1) },
 };
-const RING_SCALE = 1.15; // 物を包む球の半径に対するリングの半径
+const RING_SCREEN_RATIO = 0.13; // リングの半径が、画面の高さに占める割合(物の大きさに関わらず、画面上で一定の大きさにする)
 const HANDLE_DISTANCE = 1.35; // リング半径を 1 としたときの拡大縮小ハンドルの距離
 
 export class ObjectGizmo {
@@ -24,8 +24,6 @@ export class ObjectGizmo {
     this._scene = sceneManager;
     this._root = null;
     this._localCenter = new THREE.Vector3();
-    this._baseRadius = 1;
-    this._baseScale = 1;
     this._active = null;
 
     this._group = new THREE.Group();
@@ -100,8 +98,6 @@ export class ObjectGizmo {
       new THREE.Sphere(),
     );
     this._localCenter.copy(root.worldToLocal(sphere.center.clone()));
-    this._baseRadius = Math.max(sphere.radius, 0.001);
-    this._baseScale = root.scale.x || 1;
     this.update();
   }
 
@@ -111,10 +107,13 @@ export class ObjectGizmo {
     return this._root.localToWorld(this._localCenter.clone());
   }
 
-  /** リングの半径(ワールド座標の長さ) */
+  /** リングの半径(ワールド座標の長さ)。画面に映る大きさが一定になるよう、カメラからの距離に比例させる。 */
   get radius() {
-    return this._baseRadius * (this._root.scale.x / this._baseScale) *
-      RING_SCALE;
+    const camera = this._scene.camera;
+    const distance = camera.position.distanceTo(this.center);
+    const viewHeight = 2 * distance *
+      Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+    return Math.max(viewHeight * RING_SCREEN_RATIO, 0.001);
   }
 
   /** 毎フレーム呼ぶ。物の動き・拡大縮小とカメラの向きに合わせる。 */
