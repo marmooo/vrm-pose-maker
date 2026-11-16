@@ -778,8 +778,8 @@ function findPenetrations(ctx, bodySurface, out) {
       );
       let depth = 0;
       let dx = 0, dy = 0, dz = 0;
-      bodySurface.forEach(({ name, shape }, i) => {
-        if (isOwnPart(name, c.side)) return;
+      bodySurface.forEach(({ name, shape, other }, i) => {
+        if (!other && isOwnPart(name, c.side)) return;
         const r = shape.calculateCollision(
           mats[i],
           _v1,
@@ -1378,7 +1378,7 @@ export class IkManager {
       const r = solveChains(
         vrm,
         [this._goal(chain, e)],
-        this._callbacks.getBodySurface?.(vrm) ?? null,
+        this._surfaces(vrm) ?? null,
       )?.[0];
       keep = !!r && r.posErr <= RETRY_ERROR && r.depth <= STUCK_DEPTH;
     }
@@ -1394,15 +1394,18 @@ export class IkManager {
    */
   _attach(vrm, chain, e) {
     e.anchor = null;
-    const bodySurface = this._callbacks.getBodySurface?.(vrm);
+    const bodySurface = this._surfaces(vrm);
     if (!bodySurface?.length) return;
     vrm.scene.updateMatrixWorld(true);
     const side = IK_CHAINS[chain].side;
     let best = null;
     let bestName = null;
     let bestDist = 0;
-    for (const { name, node, offset, shape } of bodySurface) {
-      if (!node || !offset || !name || isOwnPart(name, side)) continue;
+    for (const { name, node, offset, shape, other } of bodySurface) {
+      if (!node || !offset || !name || (!other && isOwnPart(name, side))) {
+        continue;
+      }
+      if (other) node.updateWorldMatrix(true, false); // 他のモデルの今の姿勢で判定する
       _m.multiplyMatrices(node.matrixWorld, offset);
       const r = shape.calculateCollision(_m, e.target, ANCHOR_RADIUS, _dir);
       if (r < bestDist) {
@@ -1516,7 +1519,7 @@ export class IkManager {
   autoRoll(vrm, chain) {
     const e = this._chains(vrm)?.[chain];
     if (!e?.normal) return;
-    const bodySurface = this._callbacks.getBodySurface?.(vrm) ?? null;
+    const bodySurface = this._surfaces(vrm) ?? null;
     // 他の手も有効なら、体幹を共有するので一緒に解く(他の手の目標は、今のロールのまま)
     const others = Object.entries(this._chains(vrm)).filter(([c, o]) =>
       c !== chain && o.enabled
@@ -1988,7 +1991,7 @@ export class IkManager {
     const side = IK_CHAINS[chain].side;
     vrm.scene.updateMatrixWorld(true);
     const sets = collectFingerPoints(vrm, chain, FINGER_KEYS);
-    const bodySurface = this._callbacks.getBodySurface?.(vrm) ?? [];
+    const bodySurface = this._surfaces(vrm) ?? [];
     const mats = bodySurface.map((b) =>
       b.node && b.offset
         ? new THREE.Matrix4().multiplyMatrices(b.node.matrixWorld, b.offset)
@@ -2001,7 +2004,9 @@ export class IkManager {
         p.set(pts[i], pts[i + 1], pts[i + 2]).applyMatrix4(node.matrixWorld);
         if (p.y < -GRIP_MARGIN) return true; // 床
         for (let k = 0; k < bodySurface.length; k++) {
-          if (isOwnPart(bodySurface[k].name, side)) continue;
+          if (!bodySurface[k].other && isOwnPart(bodySurface[k].name, side)) {
+            continue;
+          }
           if (
             bodySurface[k].shape.calculateCollision(mats[k], p, 0, _dir) <
               -GRIP_MARGIN
@@ -2185,12 +2190,41 @@ export class IkManager {
       solveChains(
         vrm,
         [this._goal(chain, e)],
-        this._callbacks.getBodySurface?.(vrm) ?? null,
+        this._surfaces(vrm) ?? null,
       );
       reattach(); // 毎回つけ直さないと、体についた目標点が古い位置へ引き戻される
       setTimeout(() => step(i + 1), 0);
     };
     setTimeout(() => step(0), 0);
+  }
+
+  /**
+   * その体の当たり判定に、同じシーンにいる他のモデルの体の当たり判定を足したもの(他のモデルのものには other を付ける)。
+   * 腕が、自分だけでなく、そばにいる他のモデルの体にも食い込まないようにし、他のモデルの体に置いた目標を、その体に合わせて動かすのに使う。
+   */
+  _surfaces(vrm) {
+    const own = this._callbacks.getBodySurface?.(vrm);
+    const others = (this._callbacks.getOtherVrms?.(vrm) ?? [])
+      .map((v) => this._callbacks.getBodySurface?.(v))
+      .filter((a) => a?.length);
+    if (!others.length) return own;
+    const cache = this._surfaceCache?.get(vrm);
+    if (
+      cache && cache.own === own && cache.others.length === others.length &&
+      cache.others.every((a, i) => a === others[i])
+    ) return cache.merged;
+    this._otherTags ??= new WeakMap();
+    const tagged = (entry) => {
+      let t = this._otherTags.get(entry);
+      if (!t) {
+        t = { ...entry, other: true };
+        this._otherTags.set(entry, t);
+      }
+      return t;
+    };
+    const merged = [...(own ?? []), ...others.flatMap((a) => a.map(tagged))];
+    (this._surfaceCache ??= new Map()).set(vrm, { own, others, merged });
+    return merged;
   }
 
   /** 面に触れさせる手の部位を変える(HAND_PARTS のキー)。接触の点を取り直して、向きを選び直す */
@@ -2281,7 +2315,7 @@ export class IkManager {
     const active = Object.entries(chains).filter(([, e]) => e.enabled);
     if (!active.length) return;
     vrm.scene.updateMatrixWorld(true);
-    const bodySurface = this._callbacks.getBodySurface?.(vrm) ?? null;
+    const bodySurface = this._surfaces(vrm) ?? null;
     for (const [, e] of active) this._followAnchor(e);
     const goals = active.map(([chain, e]) => {
       this._ensurePoints(vrm, chain, e);

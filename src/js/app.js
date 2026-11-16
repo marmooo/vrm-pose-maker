@@ -205,6 +205,8 @@ class App {
     // 手を指定した場所に置く(IK)。目標点はモデルごとに持ち、画面上の印(丸)をクリック/ドラッグで指定する
     this._ik = new IkManager(this._scene.scene, {
       getBodySurface: (vrm) => this._scene.getBodySurface(vrm),
+      getOtherVrms: (vrm) =>
+        this._models.map((m) => m.vrm).filter((v) => v !== vrm),
       withObjectTest: (fn) => this._objects.withInsideTest(fn),
       // 触れる面のメッシュ(モデルと置いた物)。手の実際のメッシュとの隙間・食い込みを測るのに使う
       getContactMeshes: () => {
