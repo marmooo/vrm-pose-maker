@@ -9,6 +9,7 @@
  * - プロジェクト保存のため、元のファイルを保持する。
  */
 import * as THREE from "three";
+import { ContactIndex } from "./contact-index.js";
 import { createGLTFLoader } from "./gltf-loader.js";
 import { ObjectGizmo } from "./object-gizmo.js";
 import { Exporter } from "./exporter.js";
@@ -230,44 +231,33 @@ export class SceneObjects {
 
   /**
    * 置いてある物の内側にあるかを調べる関数 inside(点) を作り、fn に渡して呼ぶ(握るときの、指と物の接触の判定に使う)。
-   * 閉じたメッシュを前提に、点から上へ伸ばしたレイが面と交わる回数の偶奇で決める。裏面も数えるため、判定の間だけ両面にする。
+   * 閉じたメッシュを前提に、点から上へ伸ばしたレイが面と交わる回数の偶奇で決める(裏面も数える)。
    */
   withInsideTest(fn) {
+    // 物ごとに、三角形を格子に入れた索引を、初めて使うときに作る(レイ 1 本ごとに全三角形を調べると、細かい物で何十秒もかかる)
     const items = this._items.map((item) => {
-      const meshes = [];
-      item.root.traverse((o) => o.isMesh && meshes.push(o));
-      return {
-        root: item.root,
-        meshes,
-        box: new THREE.Box3().setFromObject(item.root),
-      };
+      const box = new THREE.Box3().setFromObject(item.root);
+      return { root: item.root, box, index: null };
     });
-    const sides = new Map();
-    for (const { meshes } of items) {
-      for (const m of meshes) {
-        for (const mat of [m.material].flat()) {
-          if (mat && !sides.has(mat)) {
-            sides.set(mat, mat.side);
-            mat.side = THREE.DoubleSide;
-          }
-        }
-      }
-    }
-    const ray = new THREE.Raycaster();
-    ray.ray.direction.set(0, 1, 0);
+    const indexOf = (item) => {
+      if (item.index) return item.index;
+      const meshes = [];
+      item.root.updateMatrixWorld(true);
+      item.root.traverse((o) => o.isMesh && meshes.push(o));
+      const sphere = item.box.getBoundingSphere(new THREE.Sphere());
+      item.index = new ContactIndex(sphere.center, sphere.radius + 0.01);
+      item.index.addMeshes(meshes);
+      return item.index;
+    };
     const inside = (p) => {
-      for (const { root, box } of items) {
-        if (!box.containsPoint(p)) continue;
-        ray.ray.origin.copy(p);
-        if (ray.intersectObject(root, true).length % 2 === 1) return true;
+      for (const item of items) {
+        if (!item.box.containsPoint(p)) continue;
+        // 点から上へ伸ばしたレイが面と交わる回数の偶奇(閉じたメッシュを前提に、裏面も数える)
+        if (indexOf(item).countUp(p, item.box.max.y) % 2 === 1) return true;
       }
       return false;
     };
-    try {
-      return fn(items.length ? inside : null);
-    } finally {
-      for (const [mat, side] of sides) mat.side = side;
-    }
+    return fn(items.length ? inside : null);
   }
 
   /** レイが当たる一番手前の物の表面の点と向き({ point, normal })。当たらなければ null。reject(点) が true の当たりは除く。 */

@@ -2115,21 +2115,34 @@ export class IkManager {
       const si = o.geometry.attributes.skinIndex,
         sw = o.geometry.attributes.skinWeight;
       if (!si || !sw) return;
-      o.skeleton.update();
-      for (let i = 0; i < si.count; i++) {
-        let best = 0, bw = -1;
-        for (let k = 0; k < 4; k++) {
-          const w = sw.getComponent(i, k);
-          if (w > bw) {
-            bw = w;
-            best = si.getComponent(i, k);
+      // 手の骨が最も強い頂点は、メッシュごとに 1 回だけ探して覚える(毎回全頂点を調べると重い)
+      this._handVertices ??= new WeakMap();
+      let ids = this._handVertices.get(o)?.[spec.side];
+      if (!ids) {
+        ids = [];
+        for (let i = 0; i < si.count; i++) {
+          let best = 0, bw = -1;
+          for (let k = 0; k < 4; k++) {
+            const w = sw.getComponent(i, k);
+            if (w > bw) {
+              bw = w;
+              best = si.getComponent(i, k);
+            }
           }
+          const bone = o.skeleton.bones[best];
+          if (
+            bone === raw ||
+            (/roll/i.test(bone.name) && /hand/i.test(bone.name) &&
+              inArm(bone))
+          ) ids.push(i);
         }
-        const bone = o.skeleton.bones[best];
-        if (
-          bone !== raw &&
-          !(/roll/i.test(bone.name) && /hand/i.test(bone.name) && inArm(bone))
-        ) continue;
+        const per = this._handVertices.get(o) ?? {};
+        per[spec.side] = ids;
+        this._handVertices.set(o, per);
+      }
+      if (!ids.length) return;
+      o.skeleton.update();
+      for (const i of ids) {
         o.getVertexPosition(i, v).applyMatrix4(o.matrixWorld);
         if (v.distanceToSquared(center) <= REFINE_RADIUS * REFINE_RADIUS) {
           out.push(v.x, v.y, v.z);
