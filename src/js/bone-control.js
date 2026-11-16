@@ -42,6 +42,16 @@ import {
 
 // 右クリックが「ドラッグ」と判定するしきい値（px）
 const DRAG_THRESHOLD = 5;
+// 胴・首・頭のボーンのクリック選択を、スキンウェイトで決めるときの対象と、必要なウェイトの強さ
+const TORSO_PICK_BONES = [
+  "hips",
+  "spine",
+  "chest",
+  "upperChest",
+  "neck",
+  "head",
+];
+const TORSO_PICK_WEIGHT = 0.5;
 // 長押し判定時間（ms）
 const LONG_PRESS_MS = 500;
 
@@ -215,7 +225,10 @@ export class BoneController {
       // 球面/ギズモのドラッグとは独立した判定なので競合しない。
       if (
         e.button === 0 &&
-        this._boneSphere.isDotHit(this._pointer, this._scene.camera)
+        this._boneSphere.isDotHit(
+          this._pointer,
+          this._scene.camera,
+        )
       ) {
         const toggled = this._boneSphere.toggleTargetMode();
         if (toggled) {
@@ -234,14 +247,17 @@ export class BoneController {
             this._scene.camera,
           );
           if (axis) {
-            this._boneSphere.beginGizmoRotate(axis);
-            this._gizmoAxisKey = axis;
-            this._beginGizmoDrag(axis, e.clientX, e.clientY);
-            this._trackingMode = "gizmo-rotate";
-            this._scene.controls.enabled = false;
-            this._canvas.classList.add("dragging-bone");
-            this._lastClientX = e.clientX;
-            this._lastClientY = e.clientY;
+            const start = () => {
+              this._boneSphere.beginGizmoRotate(axis);
+              this._gizmoAxisKey = axis;
+              this._beginGizmoDrag(axis, e.clientX, e.clientY);
+              this._trackingMode = "gizmo-rotate";
+              this._scene.controls.enabled = false;
+              this._canvas.classList.add("dragging-bone");
+              this._lastClientX = e.clientX;
+              this._lastClientY = e.clientY;
+            };
+            if (!this._deferToSelect(e, start)) start();
             return;
           }
           // どのリングにも当たらなければ、球外クリックと同じ扱いへフォールスルー
@@ -272,12 +288,17 @@ export class BoneController {
         if (sphereHit) {
           if (e.button === 0) {
             // 左ボタン: 回転追従開始（新しいドラッグなので連続性の基準をリセット）
-            this._boneSphere.resetDragReference();
-            this._boneSphere.handleClick(this._pointer, this._scene.camera);
-            this._trackingMode = "rotate";
-            this._scene.controls.enabled = false;
-            this._canvas.classList.add("dragging-bone");
-            this._boneSphere.setDragging(true);
+            const pointer = this._pointer.clone();
+            const start = () => {
+              this._boneSphere.resetDragReference();
+              this._boneSphere.handleClick(pointer, this._scene.camera);
+              this._trackingMode = "rotate";
+              this._scene.controls.enabled = false;
+              this._canvas.classList.add("dragging-bone");
+              this._boneSphere.setDragging(true);
+            };
+            if (!this._deferToSelect(e, start)) start();
+            return;
           } else {
             // 右ボタン: ドラッグか単クリックか後で判定
             this._rightDownPos = { x: e.clientX, y: e.clientY };
@@ -355,7 +376,23 @@ export class BoneController {
 
     if (!this._trackingMode) return;
 
-    if (this._trackingMode === "model-pending") {
+    if (this._trackingMode === "sphere-pending") {
+      const dx = e.clientX - this._modelDownPos.x,
+        dy = e.clientY - this._modelDownPos.y;
+      if (Math.hypot(dx, dy) > DRAG_THRESHOLD) {
+        const start = this._pendingStart;
+        this._pendingStart = null;
+        this._modelPendingBone = null;
+        this._modelDownPos = null;
+        start?.();
+        if (this._trackingMode === "rotate") {
+          this._boneSphere?.handleClick(
+            this._getPointerNDC(e.clientX, e.clientY),
+            this._scene.camera,
+          );
+        }
+      }
+    } else if (this._trackingMode === "model-pending") {
       const dx = e.clientX - this._modelDownPos.x,
         dy = e.clientY - this._modelDownPos.y;
       if (Math.hypot(dx, dy) > DRAG_THRESHOLD) {
@@ -436,13 +473,20 @@ export class BoneController {
       return;
     }
 
-    if (e.button === 0 && this._trackingMode === "model-pending") {
+    if (
+      e.button === 0 &&
+      (this._trackingMode === "model-pending" ||
+        this._trackingMode === "sphere-pending")
+    ) {
       const boneName = this._modelPendingBone;
+      this._pendingStart = null;
       this._trackingMode = null;
       this._scene.controls.enabled = true;
       this._modelPendingBone = null;
       this._modelDownPos = null;
-      if (boneName) this._selectBone(boneName);
+      if (boneName && boneName !== this._selectedBoneName) {
+        this._selectBone(boneName);
+      }
       return;
     }
 
@@ -490,7 +534,12 @@ export class BoneController {
 
       if (this._boneSphere && this._selectedBoneNode) {
         // 中心の起点（黄色い点）をタップ → 操作対象トグル（自分 ⇄ 親ボーン）
-        if (this._boneSphere.isDotHit(ndc, this._scene.camera)) {
+        if (
+          this._boneSphere.isDotHit(
+            ndc,
+            this._scene.camera,
+          )
+        ) {
           e.preventDefault();
           const toggled = this._boneSphere.toggleTargetMode();
           if (toggled) {
@@ -604,7 +653,10 @@ export class BoneController {
         const t0 = e.touches[0];
         const ndc0 = this._getPointerNDC(t0.clientX, t0.clientY);
         this._raycaster.setFromCamera(ndc0, this._scene.camera);
-        const inSphere = this._boneSphere.isSphereHit(ndc0, this._scene.camera);
+        const inSphere = this._boneSphere.isSphereHit(
+          ndc0,
+          this._scene.camera,
+        );
 
         if (inSphere) {
           e.preventDefault();
@@ -1018,6 +1070,35 @@ export class BoneController {
   // ボーン選択（スキンメッシュ）
   // =========================================================
 
+  /**
+   * ポインタの下に体(スキン)があれば、そのボーン名(なければ null)。選んでいるボーン自身の体の上も含む。
+   * 球・リングは大きく出るので、その内側にある別の部位をクリックしても、以前は球の回転が始まってしまい、選べなかった。
+   * そこで、そういう場所の左ボタンは「クリックならその部位を選ぶ・ドラッグなら球・リングの回転」と、動くまで決めない。
+   */
+  _otherBoneAtPointer() {
+    if (!this._selectedBoneName) return null;
+    this._raycaster.setFromCamera(this._pointer, this._scene.camera);
+    const hit =
+      this._raycaster.intersectObjects(this._getSkinMeshes(), true)[0];
+    if (!hit) return null;
+    const near = this._findNearestBoneFromIntersection(hit);
+    return near ?? null;
+  }
+
+  /** 左ボタンの球・リング操作を、別の部位の上なら保留にして true を返す(start は、ドラッグになったときに呼ぶ) */
+  _deferToSelect(e, start) {
+    const bone = this._otherBoneAtPointer();
+    if (!bone) return false;
+    this._trackingMode = "sphere-pending";
+    this._modelPendingBone = bone;
+    this._pendingStart = start;
+    this._modelDownPos = { x: e.clientX, y: e.clientY };
+    this._scene.controls.enabled = false;
+    this._lastClientX = e.clientX;
+    this._lastClientY = e.clientY;
+    return true;
+  }
+
   _getSkinMeshes() {
     const meshes = [];
     if (!this._vrm) return meshes;
@@ -1040,6 +1121,11 @@ export class BoneController {
   _findNearestBoneFromIntersection(intersection) {
     const point = intersection.point;
     if (!point || !this._vrm) return null;
+
+    // 胴・首・頭は、骨の線分までの距離だけだと、腰のまわりが脚の付け根に、胸まわりが腕に取られる(特に横から)。
+    // その部位のウェイトが強い三角形なら、ウェイトのほうを使う。
+    const torso = this._torsoBoneByWeight(intersection);
+    if (torso) return torso;
 
     let bestBone = null;
     let bestDist = Infinity;
@@ -1071,6 +1157,35 @@ export class BoneController {
     }
 
     return bestBone;
+  }
+
+  /** クリックした三角形が、胴・首・頭のどれかのボーンに強くスキニングされていれば、その名前。なければ null */
+  _torsoBoneByWeight(intersection) {
+    const mesh = intersection.object;
+    const face = intersection.face;
+    if (!mesh?.isSkinnedMesh || !face) return null;
+    const si = mesh.geometry.attributes.skinIndex;
+    const sw = mesh.geometry.attributes.skinWeight;
+    const bones = mesh.skeleton?.bones;
+    if (!si || !sw || !bones) return null;
+    let best = null;
+    let bestWeight = 0;
+    for (const name of TORSO_PICK_BONES) {
+      const raw = this._vrm.humanoid.getRawBoneNode(name);
+      if (!raw) continue;
+      let w = 0;
+      for (const v of [face.a, face.b, face.c]) {
+        for (let k = 0; k < 4; k++) {
+          if (bones[si.getComponent(v, k)] === raw) w += sw.getComponent(v, k);
+        }
+      }
+      w /= 3;
+      if (w > bestWeight) {
+        bestWeight = w;
+        best = name;
+      }
+    }
+    return bestWeight >= TORSO_PICK_WEIGHT ? best : null;
   }
 
   /** 点 p から線分 ab までの最短距離 */
