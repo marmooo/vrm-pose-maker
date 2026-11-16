@@ -33,8 +33,8 @@ const IMAGE_PRIORITY = new Map(IMAGE_EXTENSIONS.map((ext, i) => [ext, i]));
 const PORTRAIT_SUFFIX = "portrait";
 const FULL_BODY_SUFFIX = "full_body";
 
-/** GLB の JSON チャンク先頭を読むときの初期バイト数(ヘッダ12 + チャンクヘッダ8 + 余裕) */
-const GLB_PROBE_BYTES = 64 * 1024;
+/** GLB の JSON チャンク先頭を読むときの初期バイト数(ヘッダ12 + チャンクヘッダ8 + 余裕)。同梱モデルの JSON は 77〜144KB なので、1 回の取得で足りるようにする */
+const GLB_PROBE_BYTES = 192 * 1024;
 
 function extensionOf(path) {
   const m = /\.([^./]+)$/.exec(path);
@@ -136,6 +136,14 @@ function parseGlbJsonFromBuffer(buffer) {
   }
 }
 
+/** GLB が最後まで読めているか(ヘッダーの全体の長さと、実際のバイト数を比べる)。途中で切れていると読み込みで RangeError になる。 */
+export function isCompleteGlb(buffer) {
+  if (buffer.byteLength < 12) return false;
+  const view = new DataView(buffer);
+  if (view.getUint32(0, true) !== 0x46546c67) return true; // "glTF" でなければ(.gltf の JSON など)、長さは確認できない
+  return view.getUint32(8, true) <= buffer.byteLength;
+}
+
 /**
  * VRM(GLB) の URL からメタ情報だけを取得する(メッシュは読まない)。
  * Range 対応サーバでは JSON チャンク分だけ取得する。
@@ -159,6 +167,7 @@ export async function fetchVrmMeta(url, signal) {
   // まず先頭だけ Range で取る
   let res = await fetch(url, {
     headers: { Range: `bytes=0-${GLB_PROBE_BYTES - 1}` },
+    cache: "no-store", // 途中までの応答を、ブラウザのキャッシュに残さない(あとで全体を取るときに、途中までのものが返るのを防ぐ)
     signal,
   });
   if (!res.ok && res.status !== 206) {
@@ -173,6 +182,7 @@ export async function fetchVrmMeta(url, signal) {
     // JSON チャンクがプローブより大きい場合は必要分を取り直す
     res = await fetch(url, {
       headers: { Range: `bytes=0-${parsed.needBytes - 1}` },
+      cache: "no-store",
       signal,
     });
     if (!res.ok && res.status !== 206) {

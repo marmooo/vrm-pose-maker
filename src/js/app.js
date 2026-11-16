@@ -28,7 +28,7 @@ import {
   MaterialPanel,
 } from "./material-panel.js";
 
-import { ModelPicker } from "./model-picker.js";
+import { isCompleteGlb, ModelPicker } from "./model-picker.js";
 
 import { tr } from "./i18n.js";
 // 起動時・「VRM読込」で開くモデル選択モーダルが読む一覧(vrm/list.txt)のURL。
@@ -835,11 +835,19 @@ class App {
     this._showLoading(true);
     let file;
     try {
-      const res = await fetch(entry.vrmUrl);
-      if (!res.ok) throw new Error(tr("app.034", entry.fileName));
-      file = new File([await res.blob()], entry.fileName, {
-        type: "model/gltf-binary",
-      });
+      // 途中で切れた応答(キャッシュに残った一部分など)を掴むことがあるので、最後まで読めたか確かめ、だめならキャッシュを使わずに取り直す
+      let buffer = null;
+      for (let attempt = 0; attempt < 3 && !buffer; attempt++) {
+        const res = await fetch(
+          entry.vrmUrl,
+          attempt === 0 ? undefined : { cache: "reload" },
+        );
+        if (!res.ok) throw new Error(tr("app.034", entry.fileName));
+        const body = await res.arrayBuffer();
+        if (isCompleteGlb(body)) buffer = body;
+      }
+      if (!buffer) throw new Error(tr("app.034", entry.fileName));
+      file = new File([buffer], entry.fileName, { type: "model/gltf-binary" });
     } catch (err) {
       this._showLoading(false);
       this._showToast(err.message || tr("app.034", entry.fileName), "danger");
