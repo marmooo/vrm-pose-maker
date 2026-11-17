@@ -29,6 +29,11 @@ const ARM_AXES = {
 };
 // 体幹: 手が届かないときだけ、少しずつ体を曲げて届かせる(動きにくくしてある)
 const TRUNK_AXES = { x: 0.12, y: 0.06, z: 0.12 };
+// 股関節から体を曲げる(前屈): 骨盤を前へ倒し、脚は今の向きのまま残す。つま先や低い所へ届かせる
+const HIP_BEND_AXES = { x: 0.02 }; // 腕や背骨で届くうちは使わず、届かないときだけ曲げる
+const HIP_BENT_MIN = 0.03; // これ以上(rad)曲げていたら、曲げている状態とみなす
+const HIP_RELEASE_ERROR = 0.002; // 曲げている腰を戻すには、曲げなくても誤差がこれ以下(m)で届くこと
+const HIP_BEND_RANGE = [0, 1.4]; // rad(0° 〜 80°。後ろへは反らさない)。背骨(最大60°)と合わせて、深い前屈になる
 const LEG_AXES = {
   upperLeg: { x: 1, y: 0.4, z: 1 },
   lowerLeg: { x: 1, y: 0.2 },
@@ -37,6 +42,13 @@ const LEG_AXES = {
 function armChain(side, color) {
   return {
     joints: [
+      {
+        bone: "hips",
+        axes: HIP_BEND_AXES,
+        range: { x: HIP_BEND_RANGE },
+        hipBend: true,
+        optional: true,
+      },
       { bone: "spine", axes: TRUNK_AXES, optional: true },
       { bone: "chest", axes: TRUNK_AXES, optional: true },
       { bone: "upperChest", axes: TRUNK_AXES, optional: true },
@@ -83,6 +95,46 @@ const STUCK_DEPTH = 0.006; // 体への入り込みがこれ(m)より深いま�
 const STUCK_FRAMES = 3; // 損失がこれだけ続けて大きいと、局所解にはまっているとみなす
 const RETRY_INTERVAL = 24; // 解き直しの間隔(フレーム)
 const TRUNK_BONES = ["spine", "chest", "upperChest"];
+// 手足の関節ではなく、体を曲げる関節(初期姿勢に戻す対象から外す)
+const BEND_BONES = [...TRUNK_BONES, "hips"];
+
+// 股関節の曲げ: 骨盤(hips)は、両脚の付け根の中点を中心に回し、脚の向きは変えない。
+// hips の回転だけから脚と位置が決まるようにして(syncHipBend)、姿勢を戻すときも hips の回転さえ戻せばよいようにする
+const hipBendState = new WeakMap(); // hips ノード → 基準になる値
+function captureHipBend(vrm) {
+  const hips = vrm.humanoid.getNormalizedBoneNode("hips");
+  const l = vrm.humanoid.getNormalizedBoneNode("leftUpperLeg");
+  const r = vrm.humanoid.getNormalizedBoneNode("rightUpperLeg");
+  if (!hips || !l || !r || l.parent !== hips || r.parent !== hips) return null;
+  const pivot = l.position.clone().add(r.position).multiplyScalar(0.5);
+  const q0 = hips.quaternion.clone();
+  hipBendState.set(hips, {
+    pivot,
+    // 親から見た、脚の付け根の中点の位置(曲げても動かない)
+    center: hips.position.clone().add(pivot.clone().applyQuaternion(q0)),
+    q0,
+    legs: [l, r].map((node) => ({ node, q: node.quaternion.clone() })),
+  });
+  return hips;
+}
+function syncHipBend(hips) {
+  const st = hipBendState.get(hips);
+  if (!st) return;
+  const q = hips.quaternion;
+  hips.position.copy(st.center).sub(_v1.copy(st.pivot).applyQuaternion(q));
+  // 脚の世界での向き = 基準のときと同じ
+  const comp = _q1.copy(q).invert().multiply(st.q0);
+  for (const { node, q: base } of st.legs) {
+    node.quaternion.copy(comp).multiply(base);
+  }
+}
+/** 解の途中で hips の回転を戻したあと、脚と位置を合わせ直す */
+function settleHipBend(vrm) {
+  const hips = vrm.humanoid.getNormalizedBoneNode("hips");
+  if (!hips || !hipBendState.has(hips)) return;
+  syncHipBend(hips);
+  hips.updateMatrixWorld(true);
+}
 const EFFORT_WEIGHT = 0.02; // 関節を動かす量(rad)を、損失(m)に対してどれだけ重く見るか
 /** 手のひらの面と、置く面とのすきま(m) */
 export const SURFACE_OFFSET = 0.0005;
@@ -159,6 +211,7 @@ const FD_DELTA = 1e-3;
 
 let rotScale = 1; // 手のひらの向きの合わせる強さ(位置を優先したいとき、一時的に下げる)
 const _eul = new THREE.Euler();
+const _q1 = new THREE.Quaternion();
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _v3 = new THREE.Vector3();
@@ -442,19 +495,28 @@ function prepare(vrm, goals, bodySurface = null) {
       last = node;
       if (byBone.has(j.bone)) continue; // 体幹は、鎖どうしで共有する
       const limit = getBoneLimit(j.bone);
+      if (j.hipBend && !captureHipBend(vrm)) continue; // 脚の付け根がつながっていないモデルは、股関節を使わない
       const joint = {
         node,
         order: limit?.order ?? "XYZ",
         e: [0, 0, 0],
-        trunk: TRUNK_BONES.includes(j.bone),
+        trunk: BEND_BONES.includes(j.bone),
+        hip: !!j.hipBend,
       };
-      joint.e = eulerWithinLimit(node.quaternion, joint.order, limit, flip);
+      // 股関節の曲げは、可動域(骨盤の傾き ±20°)ではなく、脚との角度を使う
+      joint.e = eulerWithinLimit(
+        node.quaternion,
+        joint.order,
+        j.hipBend ? null : limit,
+        flip,
+      );
       byBone.set(j.bone, joint);
       joints.push(joint);
       ["x", "y", "z"].forEach((axis, k) => {
         const w = j.axes[axis];
         if (!w) return;
-        const range = limit?.[axis] ?? [-Math.PI, Math.PI]; // 可動域はラジアン
+        const range = j.range?.[axis] ?? limit?.[axis] ??
+          [-Math.PI, Math.PI]; // 可動域はラジアン
         params.push({ joint, k, w, lo: range[0], hi: range[1] });
       });
     }
@@ -557,7 +619,8 @@ function prepare(vrm, goals, bodySurface = null) {
     chains,
     flip,
     refresh: refresh.map((r) => r.node),
-    trunkNodes: joints.filter((j) => j.trunk).map((j) => j.node),
+    // 骨盤は脚や頭も含むので、「体幹についた目標」の判定には使わない
+    trunkNodes: joints.filter((j) => j.trunk && !j.hip).map((j) => j.node),
   };
 }
 
@@ -586,6 +649,7 @@ function forward(ctx) {
     j.node.quaternion.setFromEuler(
       _eul.set(j.e[0] * ctx.flip, j.e[1], j.e[2] * ctx.flip, j.order),
     );
+    if (j.hip) syncHipBend(j.node);
     j.node.updateMatrixWorld(false);
   }
   for (const node of ctx.refresh) node.updateMatrixWorld(false);
@@ -1050,7 +1114,27 @@ function solveCore(vrm, goals, bodySurface) {
       ({ ev, cost } = run());
     }
   } else {
-    ({ ev, cost } = run());
+    // 股関節の曲げ: まず、腰を曲げない(0°)で解く。それで届かないときだけ、いまの姿勢から腰も曲げて解き直す。
+    // 切り替えの境目で行ったり来たりしないよう、曲げている間は、腰を戻す条件を厳しくする(ヒステリシス)
+    const hipParams = params.filter((p) => p.joint.hip);
+    if (hipParams.length) {
+      const hipW = hipParams.map((p) => p.w);
+      const saved = ctx.joints.map((j) => j.e.slice());
+      const bent = hipParams.some((p) => p.joint.e[p.k] > HIP_BENT_MIN);
+      hipParams.forEach((p) => {
+        p.w = 0;
+        p.joint.e[p.k] = Math.max(p.lo, Math.min(p.hi, 0));
+      });
+      ({ ev, cost } = run());
+      const limit = bent ? HIP_RELEASE_ERROR : TRUNK_REACH_ERROR;
+      if (ev.per.some((p) => p.posErr > limit)) {
+        ctx.joints.forEach((j, i) => j.e.splice(0, 3, ...saved[i]));
+        hipParams.forEach((p, i) => (p.w = hipW[i]));
+        ({ ev, cost } = run());
+      }
+    } else {
+      ({ ev, cost } = run());
+    }
   }
   // それでも届かないときは、手のひらの向きの優先度を下げて、位置を優先する(向きが少しずれても、手が目標の近くへ行く方がよい)
   if (
@@ -1100,6 +1184,7 @@ export function solveChains(
   const direct = solveCore(vrm, goals, bodySurface);
   const directPose = nodes.map((n) => n.quaternion.clone());
   nodes.forEach((n, i) => n.quaternion.copy(initial[i]));
+  settleHipBend(vrm);
   vrm.scene.updateMatrixWorld(true);
   solveCore(
     vrm,
@@ -1109,6 +1194,7 @@ export function solveChains(
   const staged = solveCore(vrm, goals, bodySurface);
   if (staged && direct && staged[0].totalCost >= direct[0].totalCost) {
     nodes.forEach((n, i) => n.quaternion.copy(directPose[i]));
+    settleHipBend(vrm);
     vrm.scene.updateMatrixWorld(true);
     return direct;
   }
@@ -1536,12 +1622,14 @@ export class IkManager {
       vrm.humanoid.getNormalizedBoneNode(b)
     ).filter(Boolean);
     const arm = IK_CHAINS[chain].joints
-      .filter((j) => !TRUNK_BONES.includes(j.bone))
+      .filter((j) => !BEND_BONES.includes(j.bone))
       .map((j) => vrm.humanoid.getNormalizedBoneNode(j.bone))
       .filter(Boolean);
     const savedPose = nodes.map((n) => n.quaternion.clone());
-    const setPose = (pose) =>
+    const setPose = (pose) => {
       nodes.forEach((n, i) => n.quaternion.copy(pose[i]));
+      settleHipBend(vrm);
+    };
     vrm.scene.updateMatrixWorld(true);
     const base = this._canonicalBase(vrm, e.normal);
     const palmNormal = e.normal.clone().negate();
@@ -2362,7 +2450,7 @@ export class IkManager {
   /** 腕を初期姿勢に戻して解き直し、今より明らかに良くなったときだけ、その姿勢にする */
   _retryFromRest(vrm, chain, index, goals, bodySurface, e, currentErr) {
     const nodes = IK_CHAINS[chain].joints
-      .filter((j) => !TRUNK_BONES.includes(j.bone))
+      .filter((j) => !BEND_BONES.includes(j.bone))
       .map((j) => vrm.humanoid.getNormalizedBoneNode(j.bone))
       .filter(Boolean);
     const all = new Set(
@@ -2427,6 +2515,7 @@ export class IkManager {
       e.stuck = 0;
     } else {
       keep.forEach((n, i) => n.quaternion.copy(saved[i]));
+      settleHipBend(vrm);
     }
     vrm.scene.updateMatrixWorld(true);
   }
