@@ -58,6 +58,11 @@ export class SceneObjects {
     return this._items.map((item) => item.root);
   }
 
+  /** id の物の root(なければ undefined)。 */
+  rootOf(id) {
+    return this._items.find((item) => item.id === id)?.root;
+  }
+
   get count() {
     return this._items.length;
   }

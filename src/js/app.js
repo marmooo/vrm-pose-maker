@@ -41,6 +41,10 @@ const FRAME_CAPTURE_HEIGHT = 800;
 // 揺れ物の重力の既定値(scene.js の DEFAULT_GRAVITY と同じ値。リセットボタンで戻す先)
 const DEFAULT_PHYSICS_GRAVITY = 0.5;
 // ランダムポーズの直後に揺れ物を落ち着かせる時間(秒)と、それが不要なボーン
+// 目線ビューで、カメラから注視点までの距離(m)。カメラを回すときの回転の半径になる
+const EYE_VIEW_DISTANCE = 0.5;
+// 目線ビューのカメラを、目の中心から前へずらす距離(m)。顔の表面より前に出す
+const EYE_VIEW_ADVANCE = 0.04;
 const RANDOM_SETTLE_SECONDS = 4;
 const RANDOM_NO_SETTLE_RE = /Thumb|Index|Middle|Ring|Little|Eye$|^jaw$/;
 // 風の揺らぎの既定値(scene.js の DEFAULT_GUST と同じ値。風のリセットで戻す先)
@@ -771,6 +775,10 @@ class App {
     document.getElementById("btn-view-top").addEventListener(
       "click",
       () => this._setCameraView("top"),
+    );
+    document.getElementById("btn-view-eye").addEventListener(
+      "click",
+      () => this._setEyeView(),
     );
 
     // キーボードショートカット
@@ -2879,6 +2887,89 @@ class App {
     controls.update();
   }
 
+  /**
+   * 選択中のものの目線で見る。
+   * モデルなら、両目の中心から、頭が向いている方向を見る。
+   * オブジェクトなら、高さの中央(中心)から、ランダムな水平方向を見る。
+   */
+  _setEyeView() {
+    const current = this._currentSelection();
+    if (!current) return;
+    const eye = new THREE.Vector3();
+    const forward = new THREE.Vector3();
+    let advance = 0; // 目の中心から、前へずらす距離(目の中だと、顔の内側が見えてしまう)
+    if (current.kind === "model") {
+      const vrm = this._models.find((m) => m.id === current.id)?.vrm;
+      if (!vrm) return;
+      vrm.humanoid.update?.();
+      vrm.scene.updateMatrixWorld(true);
+      const bone = (name) => vrm.humanoid.getNormalizedBoneNode(name);
+      const head = bone("head");
+      if (!head) return;
+      const leftEye = bone("leftEye"), rightEye = bone("rightEye");
+      if (leftEye && rightEye) {
+        eye.addVectors(
+          leftEye.getWorldPosition(new THREE.Vector3()),
+          rightEye.getWorldPosition(new THREE.Vector3()),
+        ).multiplyScalar(0.5);
+      } else {
+        // 目のボーンがないモデルは、頭の根元から、頭の高さの分だけ上げる
+        const scale = vrm.scene.getWorldScale(new THREE.Vector3()).x;
+        eye.copy(head.getWorldPosition(new THREE.Vector3())).add(
+          new THREE.Vector3(0, 0.08 * scale, 0).applyQuaternion(
+            head.getWorldQuaternion(new THREE.Quaternion()),
+          ),
+        );
+      }
+      // 頭の向きのうち、体の正面側を前とする
+      // (VRM0 / VRM1 で正面が +Z か -Z か違うので、左右の脚の位置から体の正面を求めて合わせる)
+      const headQuat = head.getWorldQuaternion(new THREE.Quaternion());
+      forward.set(0, 0, 1).applyQuaternion(headQuat);
+      const lLeg = bone("leftUpperLeg");
+      const rLeg = bone("rightUpperLeg");
+      if (lLeg && rLeg) {
+        const side = lLeg
+          .getWorldPosition(new THREE.Vector3())
+          .sub(rLeg.getWorldPosition(new THREE.Vector3()));
+        const front = side.cross(new THREE.Vector3(0, 1, 0)); // 左 × 上 = 正面
+        if (front.dot(forward) < 0) {
+          forward.set(0, 0, -1).applyQuaternion(headQuat);
+        }
+      }
+      // 目から前へレイを飛ばし、自分の顔・髪の最も遠い面の先にカメラを置く
+      // (顔の厚みはモデルごとに違うので、固定距離だと内側が見えてしまう)
+      const scale = vrm.scene.getWorldScale(new THREE.Vector3()).x;
+      const ray = new THREE.Raycaster(
+        eye,
+        forward.clone().normalize(),
+        0,
+        0.3 * scale,
+      );
+      const hits = ray.intersectObject(vrm.scene, true);
+      const far = hits.reduce((m, h) => Math.max(m, h.distance), 0);
+      advance = Math.max(EYE_VIEW_ADVANCE * scale, far + 0.01 * scale);
+    } else {
+      const root = this._objects?.rootOf(current.id);
+      if (!root) return;
+      root.updateWorldMatrix(true, true);
+      new THREE.Box3().setFromObject(root).getCenter(eye);
+      const yaw = Math.random() * Math.PI * 2;
+      forward.set(Math.sin(yaw), 0, Math.cos(yaw));
+    }
+    // 目の位置にカメラを置き、少し先を注視点にする(OrbitControls が回せる最小限の距離)
+    const controls = this._scene.controls;
+    const camera = this._scene.camera;
+    camera.up.set(0, 1, 0);
+    forward.normalize();
+    camera.position.copy(eye).addScaledVector(forward, advance);
+    controls.target.copy(camera.position).addScaledVector(
+      forward,
+      EYE_VIEW_DISTANCE,
+    );
+    camera.lookAt(controls.target);
+    controls.update();
+  }
+
   // =========================================================
   // ミラーリング
   // =========================================================
@@ -3085,6 +3176,9 @@ class App {
         break;
       case "t":
         this._setCameraView("top");
+        break;
+      case "e":
+        this._setEyeView();
         break;
     }
   }
