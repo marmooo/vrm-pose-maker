@@ -497,6 +497,10 @@ class App {
         },
       );
     }
+    document.getElementById("ik-walk")?.addEventListener(
+      "change",
+      (e) => (this._ik.walk = e.target.checked),
+    );
     document.getElementById("collision-ground")?.addEventListener(
       "change",
       (e) => this._scene.setGroundContact(e.target.checked),

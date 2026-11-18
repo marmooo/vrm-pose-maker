@@ -377,6 +377,10 @@
             </div>
             <hr class="border-secondary">
             <div class="small fw-bold text-secondary mb-2" title="Press "Set target", then press and drag over the canvas: the palm follows the surface under the pointer and is set when you release, facing the surface. Drag the colored dot the same way to fine-tune it. The hand stays on the dot even when you move the model. Turn the switch off to release the hand. Rotating the arm changes which way the elbow points.">Place hands (IK)</div>
+            <div class="form-check form-switch mb-2" title="When a hand cannot reach the target even by bending and squatting, the whole body walks toward it (the model's position moves). Turns around first if the target is behind.">
+              <input class="form-check-input" type="checkbox" role="switch" id="ik-walk" checked>
+              <label class="form-check-label small" for="ik-walk">Step toward the target</label>
+            </div>
             <div class="d-flex align-items-center gap-2 mb-2">
               <div class="form-check form-switch mb-0 flex-grow-1">
                 <input class="form-check-input" type="checkbox" role="switch" id="ik-leftHand">

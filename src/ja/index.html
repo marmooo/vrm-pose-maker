@@ -377,6 +377,10 @@
             </div>
             <hr class="border-secondary">
             <div class="small fw-bold text-secondary mb-2" title="「場所を指定」を押して、画面を押したまま動かすと、手のひらがその表面に付いてきます。離すと確定します。面に触れる場所では、手のひらを面に向けます。印(丸)も同じようにドラッグで動かせます。モデルを動かしても、手は印の場所に残ります。オフにすると、手は元の動きに戻ります。腕を回して、ひじの向きを変えることもできます。">手を置く場所(IK)</div>
+            <div class="form-check form-switch mb-2" title="かがんだりしゃがんだりしても手が届かないときは、体ごと目標に向かって歩きます(モデルの位置が動きます)。目標が後ろにあるときは、先に振り向きます。">
+              <input class="form-check-input" type="checkbox" role="switch" id="ik-walk" checked>
+              <label class="form-check-label small" for="ik-walk">届かないときは歩いて近づく</label>
+            </div>
             <div class="d-flex align-items-center gap-2 mb-2">
               <div class="form-check form-switch mb-0 flex-grow-1">
                 <input class="form-check-input" type="checkbox" role="switch" id="ik-leftHand">

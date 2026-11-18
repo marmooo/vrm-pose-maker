@@ -95,6 +95,10 @@ const ROLL_CANDIDATES = 12; // 手のひらの回転を自動で選ぶとき、�
 const RETRY_ERROR = 0.03; // 今の姿勢から解いて、手の位置がこれ(m)より外れていれば、腕を初期姿勢に戻して解き直してみる
 const STUCK_DEPTH = 0.006; // 体への入り込みがこれ(m)より深いまま続けば、はまっているとみなす
 const STUCK_FRAMES = 3; // 損失がこれだけ続けて大きいと、局所解にはまっているとみなす
+const WALK_TRIGGER = 0.02; // 手がこれ(m)以上届かないとき、届く立ち位置へ移動する
+// 移動先の、目標までの水平距離(腕の長さに対する割合)。最初は楽に届く距離、それでも届かなければ、さらに近づく
+// (これより近いと、目標が体の幅の中に入って、手が置けなくなる)
+const STAND_RATIOS = [1.0, 0.7];
 const RETRY_INTERVAL = 24; // 解き直しの間隔(フレーム)
 const TRUNK_BONES = ["spine", "chest", "upperChest"];
 // 手足の関節ではなく、体を曲げる関節(初期姿勢に戻す対象から外す)
@@ -1523,6 +1527,7 @@ export class IkManager {
     this._callbacks = callbacks;
     // vrm → { vrm, chains: { [chain]: { target: Vector3, enabled: boolean, marker: Mesh } } }
     this._states = new Map();
+    this.walk = true; // 届かないとき、体ごと歩いて近づくか
     this._activeVrm = null;
     this._geometry = new THREE.SphereGeometry(MARKER_RADIUS, 16, 12);
   }
@@ -2650,8 +2655,21 @@ export class IkManager {
       this._ensurePoints(vrm, chain, e);
       return this._goal(chain, e);
     });
-    const results = solveChains(vrm, goals, bodySurface);
+    let results = solveChains(vrm, goals, bodySurface);
     if (!results) return;
+    // 届かない目標があれば、確実に届く立ち位置へ移動してから(1 回で)解き直す。それでも届かなければ、さらに近づく
+    for (
+      let attempt = 0;
+      this.walk && attempt < STAND_RATIOS.length;
+      attempt++
+    ) {
+      if (!this._moveToStance(vrm, active, results, STAND_RATIOS[attempt])) {
+        break;
+      }
+      vrm.scene.updateMatrixWorld(true);
+      for (const [, e] of active) this._followAnchor(e);
+      results = solveChains(vrm, goals, bodySurface) ?? results;
+    }
     active.forEach(([chain, e], i) => {
       // 局所解にはまって、ずっと届かないときは、腕を初期姿勢に戻して解き直してみる(間隔をあけて、良くなったときだけ採用)
       const bad = results[i].posErr > RETRY_ERROR ||
@@ -2747,6 +2765,58 @@ export class IkManager {
       settleHipBend(vrm, savedHip);
     }
     vrm.scene.updateMatrixWorld(true);
+  }
+
+  /**
+   * 腰を曲げたりしゃがんだりしても手が届かない目標があれば、目標のほうを向いて、目標から(水平に)腕の長さ × ratio の
+   * 位置へ、体ごと(足の位置ごと)移動する。体についた目標(自分の体の上)は、移動しても変わらないので対象外。
+   * @returns {boolean} 体の位置や向きを動かしたか
+   */
+  _moveToStance(vrm, active, results, ratio) {
+    let worst = -1;
+    let worstErr = WALK_TRIGGER;
+    active.forEach(([chain, e], i) => {
+      if (!chain.endsWith("Hand")) return;
+      // 自分の体についた目標は、移動しても一緒に動くので、対象外
+      for (let o = e.anchor?.node; o; o = o.parent) if (o === vrm.scene) return;
+      if (results[i].posErr > worstErr) {
+        worst = i;
+        worstErr = results[i].posErr;
+      }
+    });
+    if (worst < 0) return false;
+    const [chain, e] = active[worst];
+    const hm = vrm.humanoid;
+    const side = IK_CHAINS[chain].side;
+    const hips = hm.getNormalizedBoneNode("hips");
+    const left = hm.getNormalizedBoneNode("leftUpperLeg");
+    const right = hm.getNormalizedBoneNode("rightUpperLeg");
+    const arm = ["UpperArm", "LowerArm", "Hand"].map((n) =>
+      hm.getNormalizedBoneNode(`${side}${n}`)
+    );
+    if (!hips || !left || !right || arm.some((n) => !n)) return false;
+    const pos = (n) => n.getWorldPosition(new THREE.Vector3());
+    const armLength = pos(arm[0]).distanceTo(pos(arm[1])) +
+      pos(arm[1]).distanceTo(pos(arm[2]));
+    const toTarget = e.target.clone().sub(pos(hips));
+    toTarget.y = 0;
+    const dist = toTarget.length();
+    const stand = armLength * ratio;
+    if (dist <= stand) return false; // もう十分近い
+    toTarget.multiplyScalar(1 / dist);
+    // 体の正面(水平): 左脚の付け根 − 右脚の付け根 に、上向きを掛ける(左 × 上 = 正面)
+    const front = pos(left).sub(pos(right)).cross(_v1.set(0, 1, 0));
+    front.y = 0;
+    if (front.lengthSq() < 1e-8) return false;
+    front.normalize();
+    // 足元(モデルの原点)を軸に、目標のほうへ向き直ってから、立ち位置へ動く
+    const angle = Math.atan2(
+      front.z * toTarget.x - front.x * toTarget.z,
+      front.x * toTarget.x + front.z * toTarget.z,
+    ); // 正面から目標へ(上から見て、Y 軸まわりの角度)
+    vrm.scene.rotateOnWorldAxis(_v1.set(0, 1, 0), angle);
+    vrm.scene.position.addScaledVector(toTarget, dist - stand);
+    return true;
   }
 
   /** プロジェクト保存用 */
