@@ -77,7 +77,7 @@ const RANDOM_ANIMATION_TRANSITION_S = 0.5;
 console.info("[vrm-pose-app] build: 2026-10-18-perf-v1");
 
 /** IK の画面に出す部位 */
-const IK_UI_CHAINS = ["leftHand", "rightHand"];
+const IK_UI_CHAINS = ["leftHand", "rightHand", "leftFoot", "rightFoot"];
 
 class App {
   constructor() {
@@ -1046,7 +1046,8 @@ class App {
       const part = document.getElementById(`ik-part-${chain}`);
       if (part) {
         part.disabled = !target;
-        part.value = target?.part ?? "center";
+        part.value = target?.part ??
+          (chain.endsWith("Foot") ? "sole" : "center");
         document.getElementById(`ik-fingers-row-${chain}`)?.classList.toggle(
           "d-none",
           part.value !== "fingers",

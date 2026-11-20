@@ -499,6 +499,46 @@
               <input class="form-check-input" type="checkbox" role="switch" id="ik-fix-trunk" checked>
               <label class="form-check-label small" for="ik-fix-trunk">微調整のとき体幹を固定</label>
             </div>
+            <hr class="border-secondary">
+            <div class="small fw-bold text-secondary mb-2" title="「目標を指定」を押してから、キャンバスを押したままドラッグして足を置く場所(床・段・物)を決めます。足を置くと、モデルは動かず、その足を保ったまま手を解きます(歩きません)。スイッチをオフにすると足を解放します。回転で、面の上でのつま先の向きを変えます。">足を置く (IK)</div>
+            <div class="d-flex align-items-center gap-2 mb-2">
+              <div class="form-check form-switch mb-0 flex-grow-1">
+                <input class="form-check-input" type="checkbox" role="switch" id="ik-leftFoot">
+                <label class="form-check-label small" for="ik-leftFoot">左足</label>
+              </div>
+              <button type="button" class="btn btn-sm btn-outline-secondary" data-ik-place="leftFoot" title="キャンバスを押したままドラッグして、足を置く場所を決めます">目標を指定</button>
+            </div>
+            <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="足のどの部分を面に触れさせるか。足裏はかかととつま先の両方、かかとだけはつま先を上げる、つま先だけはかかとを上げる(つま先立ち)。">
+              <label class="small text-secondary text-nowrap" for="ik-part-leftFoot">触れる部位</label>
+              <select class="form-select form-select-sm" id="ik-part-leftFoot" disabled>
+                <option value="sole" selected>足裏(かかと+つま先)</option>
+                <option value="heel">かかとだけ</option>
+                <option value="toe">つま先だけ</option>
+              </select>
+            </div>
+            <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="面の上で、つま先がどちらを向くか。面に置いた足だけ回せます。">
+              <label class="small text-secondary text-nowrap" for="ik-roll-leftFoot">足の回転</label>
+              <input type="range" class="form-range" id="ik-roll-leftFoot" min="-180" max="180" step="1" value="0" disabled>
+            </div>
+            <div class="d-flex align-items-center gap-2 mb-2">
+              <div class="form-check form-switch mb-0 flex-grow-1">
+                <input class="form-check-input" type="checkbox" role="switch" id="ik-rightFoot">
+                <label class="form-check-label small" for="ik-rightFoot">右足</label>
+              </div>
+              <button type="button" class="btn btn-sm btn-outline-secondary" data-ik-place="rightFoot" title="キャンバスを押したままドラッグして、足を置く場所を決めます">目標を指定</button>
+            </div>
+            <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="足のどの部分を面に触れさせるか。足裏はかかととつま先の両方、かかとだけはつま先を上げる、つま先だけはかかとを上げる(つま先立ち)。">
+              <label class="small text-secondary text-nowrap" for="ik-part-rightFoot">触れる部位</label>
+              <select class="form-select form-select-sm" id="ik-part-rightFoot" disabled>
+                <option value="sole" selected>足裏(かかと+つま先)</option>
+                <option value="heel">かかとだけ</option>
+                <option value="toe">つま先だけ</option>
+              </select>
+            </div>
+            <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="面の上で、つま先がどちらを向くか。面に置いた足だけ回せます。">
+              <label class="small text-secondary text-nowrap" for="ik-roll-rightFoot">足の回転</label>
+              <input type="range" class="form-range" id="ik-roll-rightFoot" min="-180" max="180" step="1" value="0" disabled>
+            </div>
             <div id="ik-hint" class="small text-info mb-2 d-none">画面を押したまま動かして場所を決め、離すと確定します(Esc で中止)</div>
             <hr class="border-secondary">
             <div class="small fw-bold text-secondary mb-2">揺れ物の突き抜け軽減</div>

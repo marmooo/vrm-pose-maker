@@ -499,6 +499,46 @@
               <input class="form-check-input" type="checkbox" role="switch" id="ik-fix-trunk" checked>
               <label class="form-check-label small" for="ik-fix-trunk">Fix trunk when fine-tuning</label>
             </div>
+            <hr class="border-secondary">
+            <div class="small fw-bold text-secondary mb-2" title="Press "Set target", then press and drag over the canvas to choose where the foot goes (floor, steps, objects). With a foot placed, the model stays where it is and keeps that foot there while the hands are solved (it does not step). Turn the switch off to release the foot. Rotate to turn the toes on the surface.">Place feet (IK)</div>
+            <div class="d-flex align-items-center gap-2 mb-2">
+              <div class="form-check form-switch mb-0 flex-grow-1">
+                <input class="form-check-input" type="checkbox" role="switch" id="ik-leftFoot">
+                <label class="form-check-label small" for="ik-leftFoot">Left foot</label>
+              </div>
+              <button type="button" class="btn btn-sm btn-outline-secondary" data-ik-place="leftFoot" title="Press and drag over the canvas to choose where the foot goes">Set target</button>
+            </div>
+            <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="Which part of the foot touches the surface. Sole = heel and toes both touch, Heel only = toes raised, Toes only = heel raised (tiptoe).">
+              <label class="small text-secondary text-nowrap" for="ik-part-leftFoot">Touching part</label>
+              <select class="form-select form-select-sm" id="ik-part-leftFoot" disabled>
+                <option value="sole" selected>Sole (heel + toes)</option>
+                <option value="heel">Heel only</option>
+                <option value="toe">Toes only</option>
+              </select>
+            </div>
+            <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="Turns which way the toes point on the surface. Only for feet placed on a surface.">
+              <label class="small text-secondary text-nowrap" for="ik-roll-leftFoot">Foot rotation</label>
+              <input type="range" class="form-range" id="ik-roll-leftFoot" min="-180" max="180" step="1" value="0" disabled>
+            </div>
+            <div class="d-flex align-items-center gap-2 mb-2">
+              <div class="form-check form-switch mb-0 flex-grow-1">
+                <input class="form-check-input" type="checkbox" role="switch" id="ik-rightFoot">
+                <label class="form-check-label small" for="ik-rightFoot">Right foot</label>
+              </div>
+              <button type="button" class="btn btn-sm btn-outline-secondary" data-ik-place="rightFoot" title="Press and drag over the canvas to choose where the foot goes">Set target</button>
+            </div>
+            <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="Which part of the foot touches the surface. Sole = heel and toes both touch, Heel only = toes raised, Toes only = heel raised (tiptoe).">
+              <label class="small text-secondary text-nowrap" for="ik-part-rightFoot">Touching part</label>
+              <select class="form-select form-select-sm" id="ik-part-rightFoot" disabled>
+                <option value="sole" selected>Sole (heel + toes)</option>
+                <option value="heel">Heel only</option>
+                <option value="toe">Toes only</option>
+              </select>
+            </div>
+            <div class="d-flex align-items-center gap-2 mb-2 ps-4" title="Turns which way the toes point on the surface. Only for feet placed on a surface.">
+              <label class="small text-secondary text-nowrap" for="ik-roll-rightFoot">Foot rotation</label>
+              <input type="range" class="form-range" id="ik-roll-rightFoot" min="-180" max="180" step="1" value="0" disabled>
+            </div>
             <div id="ik-hint" class="small text-info mb-2 d-none">Press and drag on the canvas to choose the spot; release to confirm (Esc to cancel)</div>
             <hr class="border-secondary">
             <div class="small fw-bold text-secondary mb-2">Hair & clothes clipping</div>
