@@ -212,6 +212,21 @@ class App {
       getOtherVrms: (vrm) =>
         this._models.map((m) => m.vrm).filter((v) => v !== vrm),
       withObjectTest: (fn) => this._objects.withInsideTest(fn),
+      // 立ち位置の障害物: 置いた物の箱と、他のモデルの体(腰を中心にした円柱)
+      getObstacles: (vrm) => {
+        const boxes = this._objects.roots().map((root) =>
+          new THREE.Box3().setFromObject(root)
+        );
+        const cylinders = [];
+        for (const m of this._models) {
+          if (m.vrm === vrm) continue;
+          const hips = m.vrm.humanoid.getNormalizedBoneNode("hips");
+          if (!hips) continue;
+          const p = hips.getWorldPosition(new THREE.Vector3());
+          cylinders.push({ x: p.x, z: p.z, r: 0.25 });
+        }
+        return { boxes, cylinders };
+      },
       // 触れる面のメッシュ(モデルと置いた物)。手の実際のメッシュとの隙間・食い込みを測るのに使う
       getContactMeshes: () => {
         const meshes = [];

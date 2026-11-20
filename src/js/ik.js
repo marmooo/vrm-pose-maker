@@ -35,6 +35,12 @@ const HIP_MOVE_AXES = { x: 0.001, y: 0.02, z: 0.003 }; // 腰の平行移動(m)�
 const HIP_BENT_MIN = 0.03; // これ以上(rad)曲げていたら、曲げている状態とみなす
 const HIP_RELEASE_ERROR = 0.002; // 曲げている腰を戻すには、曲げなくても誤差がこれ以下(m)で届くこと
 const HIP_BEND_RANGE = [0, 1.4]; // rad(0° 〜 80°。後ろへは反らさない)。背骨(最大60°)と合わせて、深い前屈になる
+// 立ち位置の障害物の判定。体の足元の円(半径 m)が、物の箱や他のモデルの体にかからないところを選ぶ
+const STANCE_RADIUS = 0.2;
+const STANCE_STEP = Math.PI / 9; // 立ち位置の候補を探す角度の刻み
+const STANCE_SHRINK = [1, 0.85, 0.7]; // 目標からの距離を、遠い順に(近いほど届きやすい)
+const STANCE_LOW = 0.15; // この高さより低い物(敷物など)は、またいで立てるので障害物にしない
+const FOOT_SQUAT_ALLOWANCE = 0.15; // 腰を下げて届かせる分(脚の長さに対する割合)
 const FOOT_ANKLE_RATIO = 0.12; // 足首の高さ(脚の長さに対する割合)
 const FOOT_STAND_RATIO = 0.97; // 足を置くとき、脚をここまで伸ばせば届くとみなす
 const FOOT_SQUAT_STARTS = [0.025, 0.05, 0.1, 0.2]; // 足を置くとき、腰を下げる量の初期値(脚の長さに対する割合)
@@ -3033,12 +3039,61 @@ export class IkManager {
    * @returns {boolean} 体の位置や向きを動かしたか
    */
   /**
+   * 立ち位置(足元の水平位置 x, z)に、物や他のモデルの体がないか。
+   * 物は、箱(おおまかな大きさ)で、他のモデルは、腰を中心にした円柱で調べる
+   */
+  _stanceFree(obstacles, x, z, floor, top) {
+    if (!obstacles) return true;
+    for (const box of obstacles.boxes) {
+      if (box.max.y < floor + STANCE_LOW || box.min.y > floor + top) continue;
+      const dx = Math.max(box.min.x - x, 0, x - box.max.x);
+      const dz = Math.max(box.min.z - z, 0, z - box.max.z);
+      if (Math.hypot(dx, dz) < STANCE_RADIUS) return false;
+    }
+    for (const c of obstacles.cylinders) {
+      if (Math.hypot(x - c.x, z - c.z) < c.r + STANCE_RADIUS) return false;
+    }
+    return true;
+  }
+
+  /**
+   * 目標(tx, tz)から radii の距離のどこかで、障害物のない立ち位置のうち、今の位置(hx, hz)にいちばん近いものを探す。
+   * すでに desired(x, z)が空いていれば、それを返す。空いたところがなければ、desired のまま(体がめり込むが、届くことを優先する)
+   */
+  _freeStance(vrm, desired, target, radii, here) {
+    const obstacles = this._callbacks.getObstacles?.(vrm);
+    if (!obstacles) return desired;
+    const floor = vrm.scene.position.y;
+    const hips = vrm.humanoid.getNormalizedBoneNode("hips");
+    const top = Math.max(0.5, (hips?.getWorldPosition(_v1).y ?? 1) - floor) * 2;
+    if (this._stanceFree(obstacles, desired.x, desired.z, floor, top)) {
+      return desired;
+    }
+    let best = null;
+    let bestDist = Infinity;
+    for (const r of radii) {
+      for (let a = 0; a < Math.PI * 2 - 1e-6; a += STANCE_STEP) {
+        const x = target.x + Math.cos(a) * r, z = target.z + Math.sin(a) * r;
+        if (!this._stanceFree(obstacles, x, z, floor, top)) continue;
+        const d = Math.hypot(x - here.x, z - here.z);
+        if (d < bestDist) {
+          bestDist = d;
+          best = { x, z };
+        }
+      }
+    }
+    return best ?? desired;
+  }
+
+  /**
    * 足が届かない目標があれば、その足の付け根から、確実に届く距離まで、モデルを水平に動かす(向きは変えない)。
    * 届かないまま解き続けると、姿勢が定まらずにぷるぷるするので、先に届く位置へ動く
    */
   _moveToFoot(vrm, feet) {
     const pos = (n) => n.getWorldPosition(new THREE.Vector3());
     let move = null;
+    let moveTarget = null;
+    let moveRadii = null;
     let most = 0;
     for (const [chain, e] of feet) {
       const side = IK_CHAINS[chain].side;
@@ -3050,19 +3105,27 @@ export class IkManager {
       const length = root.distanceTo(pos(leg[1])) +
         pos(leg[1]).distanceTo(pos(leg[2]));
       // 足首は、足裏より FOOT_ANKLE_RATIO だけ上にある。腰も下げられるので、脚は少し余裕を見る
-      const dy = root.y - (e.target.y + length * FOOT_ANKLE_RATIO);
+      const dy = root.y - (e.target.y + length * FOOT_ANKLE_RATIO) -
+        length * FOOT_SQUAT_ALLOWANCE;
       const reach = Math.sqrt(
-        Math.max(0, (length * FOOT_STAND_RATIO) ** 2 - dy * dy),
+        Math.max(0, (length * FOOT_STAND_RATIO) ** 2 - Math.max(0, dy) ** 2),
       );
       const toTarget = e.target.clone().sub(root);
       toTarget.y = 0;
       const dist = toTarget.length();
       if (dist <= reach || dist - reach <= most) continue; // 水平に動いても高さが届かないときも、動かない
       most = dist - reach;
-      move = toTarget.multiplyScalar((dist - reach * 0.8) / dist);
+      move = toTarget.clone().multiplyScalar((dist - reach * 0.8) / dist);
+      moveTarget = e.target;
+      moveRadii = [0.8, 0.6, 0.4].map((k) => reach * k);
     }
     if (!move) return false;
-    vrm.scene.position.add(move);
+    // 動き先に障害物があれば、足の目標から同じ距離の、空いたところへ変える
+    const here = pos(vrm.humanoid.getNormalizedBoneNode("hips"));
+    const desired = here.clone().add(move);
+    const spot = this._freeStance(vrm, desired, moveTarget, moveRadii, here);
+    vrm.scene.position.x += spot.x - here.x;
+    vrm.scene.position.z += spot.z - here.z;
     return true;
   }
 
@@ -3103,13 +3166,29 @@ export class IkManager {
     front.y = 0;
     if (front.lengthSq() < 1e-8) return false;
     front.normalize();
+    // 立ち位置: 目標のほうへ stand だけ近づいた位置。そこに障害物があれば、目標から同じ(か少し近い)距離の、空いたところへ変える
+    const here = pos(hips);
+    const desired = here.clone().addScaledVector(toTarget, dist - stand);
+    const spot = this._freeStance(
+      vrm,
+      desired,
+      e.target,
+      STANCE_SHRINK.map((k) => stand * k),
+      here,
+    );
     // 足元(モデルの原点)を軸に、目標のほうへ向き直ってから、立ち位置へ動く
+    const face = _v2.set(e.target.x - spot.x, 0, e.target.z - spot.z);
+    if (face.lengthSq() < 1e-8) return false;
+    face.normalize();
     const angle = Math.atan2(
-      front.z * toTarget.x - front.x * toTarget.z,
-      front.x * toTarget.x + front.z * toTarget.z,
+      front.z * face.x - front.x * face.z,
+      front.x * face.x + front.z * face.z,
     ); // 正面から目標へ(上から見て、Y 軸まわりの角度)
     vrm.scene.rotateOnWorldAxis(_v1.set(0, 1, 0), angle);
-    vrm.scene.position.addScaledVector(toTarget, dist - stand);
+    vrm.scene.updateMatrixWorld(true);
+    const moved = pos(hips); // 回してから、腰の位置を測り直して、立ち位置へ動く
+    vrm.scene.position.x += spot.x - moved.x;
+    vrm.scene.position.z += spot.z - moved.z;
     return true;
   }
 
