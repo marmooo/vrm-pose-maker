@@ -54,6 +54,8 @@ const CLEAR_TRIES = 8;
 const CLEAR_SEARCHES = 2; // 同じ目標で、立ち位置を探す回数の上限 // 突き抜けないときに試す、立ち位置の数
 const STANCE_STEP = Math.PI / 9; // 立ち位置の候補を探す角度の刻み
 const STANCE_SHRINK = [1, 0.85, 0.7]; // 目標からの距離を、遠い順に(近いほど届きやすい)
+const STANCE_INSIDE = 0.05; // 腰が物の中に入っているとみなす、物の縁からの距離(m)
+const STANCE_LEAVE_RADII = [0.8, 0.7, 0.6, 0.5]; // 物の中から出るときに、手の目標から離れる距離の候補(m)
 const STANCE_LOW = 0.15; // この高さより低い物(敷物など)は、またいで立てるので障害物にしない
 const FOOT_SQUAT_ALLOWANCE = 0.15; // 腰を下げて届かせる分(脚の長さに対する割合)
 const FOOT_ANKLE_RATIO = 0.12; // 足首の高さ(脚の長さに対する割合)
@@ -855,6 +857,7 @@ function prepareEnd(vrm, chainName, end, handPoints, part = "center") {
     hasPalm: !!spec.palm || !!spec.foot,
     foot: !!spec.foot,
     samples,
+    boxCount: spec.foot ? 5 : 4, // 置いた物の箱を避ける点の数(先頭から。手首から先と足は、面に触れるので除く)
     samplePos: new Float64Array(samples.length * 3),
     handPoints,
     contactNormal: null, // 面に置くとき、面の外向きの法線
@@ -1285,6 +1288,48 @@ function findPenetrations(ctx, bodySurface, out) {
       }
     });
   });
+  // 置いた物(箱)の中を、腕や脚が通り抜けないようにする
+  if (bodySurface?.boxes?.length) {
+    ctx.chains.forEach((c, ci) => {
+      for (let k = 0; k < Math.min(c.boxCount ?? 0, c.samples.length); k++) {
+        const x = c.samplePos[k * 3],
+          y = c.samplePos[k * 3 + 1],
+          z = c.samplePos[k * 3 + 2];
+        const rr = c.samples[k].r + COLLISION_BAND;
+        for (const b of bodySurface.boxes) {
+          const qx = Math.max(b.min.x, Math.min(b.max.x, x));
+          const qy = Math.max(b.min.y, Math.min(b.max.y, y));
+          const qz = Math.max(b.min.z, Math.min(b.max.z, z));
+          let dx = x - qx, dy = y - qy, dz = z - qz;
+          let dist = Math.hypot(dx, dy, dz);
+          if (dist < 1e-9) {
+            // 箱の中: いちばん近い面から外へ
+            const faces = [
+              [x - b.min.x, -1, 0, 0],
+              [b.max.x - x, 1, 0, 0],
+              [y - b.min.y, 0, -1, 0],
+              [b.max.y - y, 0, 1, 0],
+              [z - b.min.z, 0, 0, -1],
+              [b.max.z - z, 0, 0, 1],
+            ];
+            const f = faces.reduce((m, v) => (v[0] < m[0] ? v : m));
+            dist = -f[0];
+            dx = f[1];
+            dy = f[2];
+            dz = f[3];
+          } else {
+            dx /= dist;
+            dy /= dist;
+            dz /= dist;
+          }
+          const depth = rr - dist;
+          if (depth > 0) {
+            out.push({ ci, k, depth: depth - COLLISION_BAND, dx, dy, dz });
+          }
+        }
+      }
+    });
+  }
   if (!bodySurface?.length) return;
   const mats = bodySurface.map((e) =>
     e.node && e.offset
@@ -2926,6 +2971,12 @@ export class IkManager {
    * 腕が、自分だけでなく、そばにいる他のモデルの体にも食い込まないようにし、他のモデルの体に置いた目標を、その体に合わせて動かすのに使う。
    */
   _surfaces(vrm) {
+    const s = this._surfacesRaw(vrm);
+    if (s) s.boxes = this._frameBoxes ?? null; // 置いた物の箱(solveCore が、腕や脚の通り抜けを防ぐのに使う)
+    return s;
+  }
+
+  _surfacesRaw(vrm) {
     const own = this._callbacks.getBodySurface?.(vrm);
     const others = (this._callbacks.getOtherVrms?.(vrm) ?? [])
       .map((v) => this._callbacks.getBodySurface?.(v))
@@ -3050,6 +3101,11 @@ export class IkManager {
     if (guard.sigAfter === sig && guard.sigBefore === sig) return;
     guard.sigBefore = sig;
     const canMove = this.walk && !guard.frozen;
+    const floorY = vrm.scene.position.y;
+    this._frameBoxes =
+      this._callbacks.getObstacles?.(vrm)?.boxes.filter((b) =>
+        b.max.y >= floorY + STANCE_LOW
+      ) ?? null;
     const t0 = this._pose(vrm);
     let pending = this._solveAll(vrm, enabled, canMove);
     // 全身が、他のモデルの体を突き抜けていれば、押し出して、手足を解き直す
@@ -3205,6 +3261,8 @@ export class IkManager {
     const feet = enabled.filter(([chain]) => IK_CHAINS[chain].foot);
     if (feet.length) {
       const goals = feet.map(([chain, e]) => this._goal(chain, e));
+      // 両足を置くなら、低いほうの足の高さに、モデルを持ち上げる(物の上に立つ)
+      if (canMove && feet.length >= 2) this._liftToFeet(vrm, feet);
       // 届かない足は、先に届く位置へ動く(届かないまま解くと、姿勢が定まらずにぷるぷるする)
       if (canMove && this._moveToFoot(vrm, feet)) {
         vrm.scene.updateMatrixWorld(true);
@@ -3214,6 +3272,7 @@ export class IkManager {
     }
     const active = enabled.filter(([chain]) => !IK_CHAINS[chain].foot);
     if (!active.length) return false;
+    if (canMove && !feet.length) this._leaveObstacle(vrm, active);
     const bodySurface = this._surfaces(vrm) ?? null;
     for (const [, e] of active) this._followAnchor(e);
     const goals = active.map(([chain, e]) => {
@@ -3366,16 +3425,16 @@ export class IkManager {
    * 立ち位置(足元の水平位置 x, z)に、物や他のモデルの体がないか。
    * 物は、箱(おおまかな大きさ)で、他のモデルは、腰を中心にした円柱で調べる
    */
-  _stanceFree(obstacles, x, z, floor, top) {
+  _stanceFree(obstacles, x, z, floor, top, radius = STANCE_RADIUS) {
     if (!obstacles) return true;
     for (const box of obstacles.boxes) {
       if (box.max.y < floor + STANCE_LOW || box.min.y > floor + top) continue;
       const dx = Math.max(box.min.x - x, 0, x - box.max.x);
       const dz = Math.max(box.min.z - z, 0, z - box.max.z);
-      if (Math.hypot(dx, dz) < STANCE_RADIUS) return false;
+      if (Math.hypot(dx, dz) < radius) return false;
     }
     for (const c of obstacles.cylinders) {
-      if (Math.hypot(x - c.x, z - c.z) < c.r + STANCE_RADIUS) return false;
+      if (Math.hypot(x - c.x, z - c.z) < c.r + radius) return false;
     }
     return true;
   }
@@ -3413,6 +3472,47 @@ export class IkManager {
    * 足が届かない目標があれば、その足の付け根から、確実に届く距離まで、モデルを水平に動かす(向きは変えない)。
    * 届かないまま解き続けると、姿勢が定まらずにぷるぷるするので、先に届く位置へ動く
    */
+  /** 置いた物(箱)の中に立っているとき、手の目標の近くの、物の外へ出る */
+  _leaveObstacle(vrm, active) {
+    const obstacles = this._callbacks.getObstacles?.(vrm);
+    if (!obstacles?.boxes.length) return false;
+    const hips = vrm.humanoid.getNormalizedBoneNode("hips");
+    if (!hips) return false;
+    const here = hips.getWorldPosition(new THREE.Vector3());
+    const floor = vrm.scene.position.y;
+    const top = Math.max(0.5, here.y - floor) * 2;
+    if (
+      this._stanceFree(
+        { boxes: obstacles.boxes, cylinders: [] },
+        here.x,
+        here.z,
+        floor,
+        top,
+        STANCE_INSIDE,
+      )
+    ) return false;
+    const hand = active.find(([chain]) => chain.endsWith("Hand"));
+    if (!hand) return false;
+    const target = this._aim(vrm, active, hand[1]);
+    const spot = this._freeStance(vrm, here, target, STANCE_LEAVE_RADII, here);
+    if (!this._standAt(vrm, spot, target)) return false; // 目標のほうを向いて立つ
+    vrm.scene.updateMatrixWorld(true);
+    return true;
+  }
+
+  /**
+   * 両足を置く場所が、床より高い(物の上など)とき、モデルをその高さまで持ち上げる(低いほうの足に合わせる。もう片方は脚で届かせる)。
+   * 床に戻したときは、床まで下げる
+   */
+  _liftToFeet(vrm, feet) {
+    const y = Math.min(...feet.map(([, e]) => e.target.y));
+    const lift = y - vrm.scene.position.y;
+    if (Math.abs(lift) < 1e-4) return;
+    vrm.scene.position.y = y;
+    vrm.scene.userData.groundLift = 0; // 接地の持ち上げ量とは別に、ここで高さを決めたので、重ねて引かれないようにする
+    vrm.scene.updateMatrixWorld(true);
+  }
+
   _moveToFoot(vrm, feet) {
     const pos = (n) => n.getWorldPosition(new THREE.Vector3());
     let move = null;
