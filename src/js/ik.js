@@ -31,6 +31,8 @@ const ARM_AXES = {
 const TRUNK_AXES = { x: 0.12, y: 0.06, z: 0.12 };
 // 股関節から体を曲げる(前屈): 骨盤を前へ倒し、脚は今の向きのまま残す。つま先や低い所へ届かせる
 const HIP_BEND_AXES = { x: 0.02 }; // 腕や背骨で届くうちは使わず、届かないときだけ曲げる
+const SPREAD_WEIGHT = 0.05; // 足を広げる量の動きやすさ。胴や手で届かず、膝が胴にめり込むときだけ使うよう、小さくする
+const SPREAD_MAX = 0.4; // 足を広げる量の上限(脚の長さに対する割合。左右の足の間隔が増える分)
 const HIP_MOVE_AXES = { x: 0.001, y: 0.02, z: 0.003 }; // 腰の平行移動(m)。前屈と同じく、腕や背骨で届かないときだけ使う
 const HIP_BENT_MIN = 0.03; // これ以上(rad)曲げていたら、曲げている状態とみなす
 const HIP_RELEASE_ERROR = 0.002; // 曲げている腰を戻すには、曲げなくても誤差がこれ以下(m)で届くこと
@@ -235,6 +237,8 @@ function captureHipBend(vrm) {
     fwd: fwd.normalize(),
     len: Math.max(...legs.map((x) => x.l1 + x.l2)),
     t: new THREE.Vector3(), // 基準の姿勢からの、腰の平行移動
+    spread: 0, // 置いていない足の、左右の間隔を広げる量(m)
+    side: side.clone().setY(0).normalize(), // 左脚へ向く水平の向き(親の座標系)
     sig: new Float64Array(7 + 2 * 12),
   });
   const st = hipBendState.get(hips);
@@ -276,6 +280,12 @@ function solveLeg(hips, st, leg) {
   const lp = legPose(hips, leg, _lp);
   const { l1, l2 } = leg;
   const to = _hv1.copy(leg.pin).sub(lp.hip);
+  if (st.spread > 0) {
+    to.addScaledVector(
+      st.side,
+      leg === st.legs[0] ? st.spread / 2 : -st.spread / 2,
+    );
+  }
   const dist = to.length();
   if (dist < 1e-6) return;
   const dirT = to.multiplyScalar(1 / dist);
@@ -323,7 +333,7 @@ function syncHipBend(hips) {
     leg.lower.quaternion.copy(leg.qL);
     leg.foot.quaternion.copy(leg.qF);
   }
-  if (st.t.lengthSq() > 1e-10) {
+  if (st.t.lengthSq() > 1e-10 || st.spread > 0) {
     hips.position.add(st.t);
     for (const leg of st.legs) if (!leg.free) solveLeg(hips, st, leg); // 足を動かす脚は、鎖の関節で決める
   }
@@ -332,14 +342,21 @@ function syncHipBend(hips) {
 /** 今の腰の平行移動(姿勢を覚えておくとき用) */
 function hipOffset(vrm) {
   const hips = vrm.humanoid.getNormalizedBoneNode("hips");
-  return hipBendState.get(hips)?.t.clone() ?? null;
+  const st = hipBendState.get(hips);
+  if (!st) return null;
+  const t = st.t.clone();
+  t.spread = st.spread;
+  return t;
 }
 /** 解の途中で hips の回転(と平行移動 t)を戻したあと、脚と位置を合わせ直す */
 function settleHipBend(vrm, t = null) {
   const hips = vrm.humanoid.getNormalizedBoneNode("hips");
   const st = hips && hipBendState.get(hips);
   if (!st) return;
-  if (t) st.t.copy(t);
+  if (t) {
+    st.t.copy(t);
+    st.spread = t.spread ?? 0;
+  }
   syncHipBend(hips);
   hips.updateMatrixWorld(true);
 }
@@ -896,11 +913,33 @@ function prepare(vrm, goals, bodySurface = null) {
           let low = lo * st.len;
           if (axis === "y") {
             // 立ち位置の再計算で、基準の姿勢が少しずつ低くなって、腰が床まで沈み続けないよう、腰の高さの下限を決める
-            const baseY = node.getWorldPosition(_v1).y - vrm.scene.position.y - st.t.y;
+            const baseY = node.getWorldPosition(_v1).y - vrm.scene.position.y -
+              st.t.y;
             low = Math.max(low, Math.min(0, HIP_MIN_HEIGHT * st.len - baseY));
           }
           params.push({ joint, k, w, lo: low, hi: hi * st.len });
         });
+        // 足を広げる量。置いていない足がある(両足が動かせる)ときだけ、必要なら使う
+        const sj = {
+          node,
+          order: "XYZ",
+          e: [st.spread],
+          trunk: true,
+          hip: true,
+          move: true,
+          spread: true,
+          state: st,
+        };
+        if (!spec.foot) joints.push(sj);
+        if (!spec.foot) {
+          params.push({
+            joint: sj,
+            k: 0,
+            w: SPREAD_WEIGHT,
+            lo: 0,
+            hi: SPREAD_MAX * st.len,
+          });
+        }
         continue;
       }
       const joint = {
@@ -1060,7 +1099,8 @@ function lowestPoint(f, cn) {
 function forward(ctx) {
   for (const j of ctx.joints) {
     if (j.move) {
-      j.state.t.set(j.e[0], j.e[1], j.e[2]); // 腰の平行移動は、続く hips の回転のところで、まとめて反映する
+      if (j.spread) j.state.spread = j.e[0];
+      else j.state.t.set(j.e[0], j.e[1], j.e[2]); // 腰の平行移動は、続く hips の回転のところで、まとめて反映する
       continue;
     }
     j.node.quaternion.setFromEuler(
@@ -3032,9 +3072,13 @@ export class IkManager {
       const n = hm.getNormalizedBoneNode(name);
       if (n) v.push(...n.quaternion.toArray());
     }
-    v.push(...hm.getNormalizedBoneNode("hips").position.toArray(), ...this._pose(vrm));
+    v.push(
+      ...hm.getNormalizedBoneNode("hips").position.toArray(),
+      ...this._pose(vrm),
+    );
     for (const m of this._callbacks.getOtherPoses?.(vrm) ?? []) v.push(...m);
-    return v.map((x) => (typeof x === "number" ? Math.round(x * 1e5) : x)).join();
+    return v.map((x) => (typeof x === "number" ? Math.round(x * 1e5) : x))
+      .join();
   }
 
   /** モデルの置き場所(水平位置と向き) */
@@ -3230,7 +3274,8 @@ export class IkManager {
   }
 
   _targetKey(e) {
-    return [...e.target.toArray(), e.roll ?? 0].map((v) => +v.toFixed(3)).join();
+    return [...e.target.toArray(), e.roll ?? 0].map((v) => +v.toFixed(3))
+      .join();
   }
 
   /** 腕を初期姿勢に戻して解き直し、今より明らかに良くなったときだけ、その姿勢にする */
@@ -3265,7 +3310,9 @@ export class IkManager {
     const started = performance.now();
     for (const seed of seeds) {
       // 1 回の解き直しで、画面が止まりすぎないよう、時間の上限を超えたら、残りの試しはやめる
-      if (seed !== seeds[0] && performance.now() - started > RETRY_BUDGET_MS) break;
+      if (seed !== seeds[0] && performance.now() - started > RETRY_BUDGET_MS) {
+        break;
+      }
       // free: 体幹を固定していると届かないときの最後の手段として、体幹も動かして解く
       const gs = seed === "free"
         ? goals.map((g) => ({ ...g, lockTrunk: false }))
@@ -3412,7 +3459,9 @@ export class IkManager {
   _aim(vrm, active, e) {
     const hands = active.filter(([chain, en]) => {
       if (!chain.endsWith("Hand")) return false;
-      for (let o = en.anchor?.node; o; o = o.parent) if (o === vrm.scene) return false;
+      for (let o = en.anchor?.node; o; o = o.parent) {
+        if (o === vrm.scene) return false;
+      }
       return true;
     });
     if (hands.length < 2) return e.target;

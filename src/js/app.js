@@ -222,7 +222,9 @@ class App {
           poses.push([
             ...m.vrm.scene.position.toArray(),
             ...m.vrm.scene.quaternion.toArray(),
-            ...(hips ? hips.getWorldPosition(new THREE.Vector3()).toArray() : []),
+            ...(hips
+              ? hips.getWorldPosition(new THREE.Vector3()).toArray()
+              : []),
           ]);
         }
         for (const root of this._objects.roots()) {
