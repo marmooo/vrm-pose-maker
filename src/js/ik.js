@@ -37,6 +37,10 @@ const HIP_RELEASE_ERROR = 0.002; // 曲げている腰を戻すには、曲げ�
 const HIP_BEND_RANGE = [0, 1.4]; // rad(0° 〜 80°。後ろへは反らさない)。背骨(最大60°)と合わせて、深い前屈になる
 // 立ち位置の障害物の判定。体の足元の円(半径 m)が、物の箱や他のモデルの体にかからないところを選ぶ
 const STANCE_RADIUS = 0.2;
+const BLOCK_DEPTH = 0.01; // 腕の入り込みがこれ(m)より深いと、体を突き抜けているとみなして、立ち位置を変える
+const DEPENETRATE_ITERATIONS = 4;
+const DEPENETRATE_MIN = 0.003; // 体が他のモデルにこれ(m)より入り込んでいれば、押し出す
+const CLEAR_TRIES = 8; // 突き抜けないときに試す、立ち位置の数
 const STANCE_STEP = Math.PI / 9; // 立ち位置の候補を探す角度の刻み
 const STANCE_SHRINK = [1, 0.85, 0.7]; // 目標からの距離を、遠い順に(近いほど届きやすい)
 const STANCE_LOW = 0.15; // この高さより低い物(敷物など)は、またいで立てるので障害物にしない
@@ -94,6 +98,7 @@ function legChain(side, color) {
     end: `${side}Foot`,
     side,
     foot: true, // 足の鎖(先端は、足裏・かかと・つま先の接触点)
+    collide: true, // 脚が体(胴・反対の脚・他のモデル)を突き抜けないようにする
     color,
   };
 }
@@ -718,9 +723,12 @@ export function collectFingerPoints(vrm, chainName, keys) {
 }
 
 /** 自分の側の腕(肩・腕・手)か。自分の腕の当たり判定は、体の判定から外す */
-function isOwnPart(name, side) {
+function isOwnPart(name, side, foot = false) {
   return name.startsWith(side) &&
-    /(Shoulder|UpperArm|LowerArm|Hand)$/.test(name);
+    (foot
+      ? /(UpperLeg|LowerLeg|Foot|Toes)$/
+      : /(Shoulder|UpperArm|LowerArm|Hand)$/)
+      .test(name);
 }
 
 /** 1 つの鎖の、先端(手のひら)まわりの情報を用意する */
@@ -750,7 +758,38 @@ function prepareEnd(vrm, chainName, end, handPoints, part = "center") {
   }
   // 体に当たらないか調べる点(腕の骨に沿った球)。ボーン座標で持つ
   const samples = [];
-  if (spec.collide) {
+  if (spec.collide && spec.foot) {
+    // 脚の骨に沿った球(太ももの付け根は、腰の判定と重なるので、少し下から)
+    const bone = (n) => vrm.humanoid.getNormalizedBoneNode(`${spec.side}${n}`);
+    const [upper, lower, foot] = [
+      bone("UpperLeg"),
+      bone("LowerLeg"),
+      bone("Foot"),
+    ];
+    if (upper && lower && foot) {
+      const u = Math.min(
+        1.5,
+        Math.max(
+          0.6,
+          (lower.position.length() + foot.position.length()) / 0.85,
+        ),
+      );
+      const add = (node, from, ts, r) => {
+        for (const t of ts) {
+          samples.push({
+            node,
+            local: from.clone().multiplyScalar(t),
+            r: r * u,
+          });
+        }
+      };
+      add(upper, lower.position, [0.6, 0.85], 0.07);
+      add(lower, foot.position, [0, 0.5, 0.85], 0.05);
+      add(foot, new THREE.Vector3(), [0], 0.045);
+      const geo = footGeometry(vrm, spec.side);
+      if (geo) add(foot, geo.fwd.clone().multiplyScalar(0.12), [1], 0.035 * u);
+    }
+  } else if (spec.collide) {
     const bone = (n) => vrm.humanoid.getNormalizedBoneNode(`${spec.side}${n}`);
     const [upper, lower, hand] = [
       bone("UpperArm"),
@@ -786,6 +825,7 @@ function prepareEnd(vrm, chainName, end, handPoints, part = "center") {
     normalLocal,
     fingerLocal,
     hasPalm: !!spec.palm || !!spec.foot,
+    foot: !!spec.foot,
     samples,
     samplePos: new Float64Array(samples.length * 3),
     handPoints,
@@ -1204,7 +1244,7 @@ function findPenetrations(ctx, bodySurface, out) {
       let depth = 0;
       let dx = 0, dy = 0, dz = 0;
       bodySurface.forEach(({ name, shape, other }, i) => {
-        if (!other && isOwnPart(name, c.side)) return;
+        if (!other && isOwnPart(name, c.side, c.foot)) return;
         const r = shape.calculateCollision(
           mats[i],
           _v1,
@@ -1724,6 +1764,7 @@ export class IkManager {
     // vrm → { vrm, chains: { [chain]: { target: Vector3, enabled: boolean, marker: Mesh } } }
     this._states = new Map();
     this.walk = true; // 届かないとき、体ごと歩いて近づくか
+    this._guards = new WeakMap();
     this._activeVrm = null;
     this._geometry = new THREE.SphereGeometry(MARKER_RADIUS, 16, 12);
   }
@@ -2900,16 +2941,146 @@ export class IkManager {
     if (!chains) return;
     const enabled = Object.entries(chains).filter(([, e]) => e.enabled);
     if (!enabled.length) return;
+    // 動きが行ったり来たりして止まらない(ぷるぷる)ときは、目標が変わるまで、体を動かすのをやめる
+    const guard = this._guard(vrm, enabled);
+    const canMove = this.walk && !guard.frozen;
+    const t0 = this._pose(vrm);
+    this._solveAll(vrm, enabled, canMove);
+    // 全身が、他のモデルの体を突き抜けていれば、押し出して、手足を解き直す
+    if (canMove && this._depenetrate(vrm, enabled)) {
+      this._solveAll(vrm, enabled, false);
+    }
+    this._watchMotion(vrm, guard, t0);
+  }
+
+  /** モデルの置き場所(水平位置と向き) */
+  _pose(vrm) {
+    const p = vrm.scene.position, q = vrm.scene.quaternion;
+    return [p.x, p.z, q.x, q.y, q.z, q.w];
+  }
+
+  _guard(vrm, enabled) {
+    let g = this._guards.get(vrm);
+    if (!g) {
+      this._guards.set(vrm, g = { key: "", hist: [], flips: 0, frozen: false });
+    }
+    const key = enabled.map(([c, e]) => `${c}:${e.target.toArray().join()}`)
+      .join("|");
+    if (key !== g.key) {
+      Object.assign(g, { key, hist: [], flips: 0, frozen: false });
+    }
+    return g;
+  }
+
+  /**
+   * 体の置き場所が、2 回前の置き場所に戻る動きが続いたら、行ったり来たりしているので、止める
+   */
+  _watchMotion(vrm, g, before) {
+    const now = this._pose(vrm);
+    const diff = (a, b) => Math.max(...a.map((v, i) => Math.abs(v - b[i])));
+    if (diff(now, before) < 0.001) return; // 動いていない
+    const prev2 = g.hist[g.hist.length - 2];
+    g.flips = prev2 && diff(now, prev2) < 0.002
+      ? g.flips + 1
+      : Math.max(0, g.flips - 1);
+    g.hist.push(before);
+    if (g.hist.length > 4) g.hist.shift();
+    if (g.flips >= 3) g.frozen = true;
+  }
+
+  /**
+   * 体(胴・頭・腰・指定していない脚)が、他のモデルの体にどれだけ入り込んでいるか。腕は、手の IK が避けるので、ここでは見ない。
+   * @returns {{depth: number, push: THREE.Vector3}} 最も深い入り込み(m)と、それを水平に押し出す移動量
+   */
+  _bodyHits(vrm, enabled, surfaces) {
+    const hm = vrm.humanoid;
+    const node = (n) => hm.getNormalizedBoneNode(n);
+    const hips = node("hips");
+    const out = { depth: 0, push: new THREE.Vector3() };
+    if (!hips || !surfaces?.length) return out;
+    const u = Math.min(
+      1.5,
+      Math.max(
+        0.6,
+        (hips.getWorldPosition(_v1).y - vrm.scene.position.y) / 0.9,
+      ),
+    );
+    const placed = new Set(
+      enabled.filter(([c]) => IK_CHAINS[c].foot).map(([c]) =>
+        IK_CHAINS[c].side
+      ),
+    );
+    // [骨, 次の骨(あれば、その中間), 半径]
+    const parts = [
+      ["hips", null, 0.13],
+      ["spine", null, 0.12],
+      ["chest", null, 0.13],
+      ["upperChest", null, 0.12],
+      ["neck", null, 0.06],
+      ["head", null, 0.1],
+    ];
+    for (const side of ["left", "right"]) {
+      if (placed.has(side)) continue; // 足を置いた脚は、その場に残す
+      parts.push(
+        [`${side}UpperLeg`, `${side}LowerLeg`, 0.08],
+        [`${side}LowerLeg`, `${side}Foot`, 0.06],
+        [`${side}Foot`, null, 0.05],
+      );
+    }
+    const mats = surfaces.map((e) =>
+      e.node && e.offset
+        ? new THREE.Matrix4().multiplyMatrices(e.node.matrixWorld, e.offset)
+        : e.bone.matrixWorld
+    );
+    for (const [a, b, r] of parts) {
+      const na = node(a);
+      if (!na) continue;
+      const p = na.getWorldPosition(_v2);
+      if (b && node(b)) p.lerp(node(b).getWorldPosition(_v3), 0.5);
+      surfaces.forEach(({ shape }, i) => {
+        const d = shape.calculateCollision(mats[i], p, r * u, _dir);
+        if (d >= 0 || -d <= out.depth) return;
+        out.depth = -d;
+        // 押し出しは水平に。法線が上下に偏っているときは、入り込みを水平に換算する(行き過ぎないよう、換算は 3 倍まで)
+        const h = Math.hypot(_dir.x, _dir.z);
+        if (h > 1e-6) {
+          out.push.set(_dir.x / h, 0, _dir.z / h).multiplyScalar(
+            -d / Math.max(h, 0.33),
+          );
+        } else out.push.set(0, 0, 0);
+      });
+    }
+    return out;
+  }
+
+  /** 体が他のモデルの体に入り込んでいれば、水平に押し出す。動かしたら true */
+  _depenetrate(vrm, enabled) {
+    const surfaces = this._surfaces(vrm)?.filter((e) => e.other);
+    if (!surfaces?.length) return false;
+    let moved = false;
+    for (let iter = 0; iter < DEPENETRATE_ITERATIONS; iter++) {
+      vrm.scene.updateMatrixWorld(true);
+      const hit = this._bodyHits(vrm, enabled, surfaces);
+      if (hit.depth < DEPENETRATE_MIN || hit.push.lengthSq() < 1e-10) break;
+      hit.push.setLength(hit.push.length() + 0.002);
+      vrm.scene.position.add(hit.push);
+      moved = true;
+    }
+    if (moved) vrm.scene.updateMatrixWorld(true);
+    return moved;
+  }
+
+  _solveAll(vrm, enabled, canMove) {
     vrm.scene.updateMatrixWorld(true);
     // 足が指定されていれば、先にその場所へ足を置く。以降の腰の移動(しゃがみ)も、その足の位置を保つ
     const feet = enabled.filter(([chain]) => IK_CHAINS[chain].foot);
     if (feet.length) {
       const goals = feet.map(([chain, e]) => this._goal(chain, e));
       // 届かない足は、先に届く位置へ動く(届かないまま解くと、姿勢が定まらずにぷるぷるする)
-      if (this.walk && this._moveToFoot(vrm, feet)) {
+      if (canMove && this._moveToFoot(vrm, feet)) {
         vrm.scene.updateMatrixWorld(true);
       }
-      solveChains(vrm, goals);
+      solveChains(vrm, goals, this._surfaces(vrm) ?? null);
       vrm.scene.updateMatrixWorld(true);
     }
     const active = enabled.filter(([chain]) => !IK_CHAINS[chain].foot);
@@ -2925,7 +3096,7 @@ export class IkManager {
     // 届かない目標があれば、確実に届く立ち位置へ移動してから(1 回で)解き直す。それでも届かなければ、さらに近づく
     for (
       let attempt = 0;
-      this.walk && !feet.length && attempt < STAND_RATIOS.length;
+      canMove && !feet.length && attempt < STAND_RATIOS.length;
       // 足を指定したら、その場から動かない
       attempt++
     ) {
@@ -2934,6 +3105,14 @@ export class IkManager {
       }
       vrm.scene.updateMatrixWorld(true);
       for (const [, e] of active) this._followAnchor(e);
+      results = solveChains(vrm, goals, bodySurface) ?? results;
+    }
+    // 届いていても、体を突き抜けているなら、突き抜けない立ち位置を探す
+    if (
+      canMove && !feet.length &&
+      this._moveToClear(vrm, active, goals, bodySurface, results, enabled)
+    ) {
+      vrm.scene.updateMatrixWorld(true);
       results = solveChains(vrm, goals, bodySurface) ?? results;
     }
     active.forEach(([chain, e], i) => {
@@ -3161,11 +3340,6 @@ export class IkManager {
     const stand = armLength * ratio;
     if (dist <= stand) return false; // もう十分近い
     toTarget.multiplyScalar(1 / dist);
-    // 体の正面(水平): 左脚の付け根 − 右脚の付け根 に、上向きを掛ける(左 × 上 = 正面)
-    const front = pos(left).sub(pos(right)).cross(_v1.set(0, 1, 0));
-    front.y = 0;
-    if (front.lengthSq() < 1e-8) return false;
-    front.normalize();
     // 立ち位置: 目標のほうへ stand だけ近づいた位置。そこに障害物があれば、目標から同じ(か少し近い)距離の、空いたところへ変える
     const here = pos(hips);
     const desired = here.clone().addScaledVector(toTarget, dist - stand);
@@ -3176,8 +3350,23 @@ export class IkManager {
       STANCE_SHRINK.map((k) => stand * k),
       here,
     );
-    // 足元(モデルの原点)を軸に、目標のほうへ向き直ってから、立ち位置へ動く
-    const face = _v2.set(e.target.x - spot.x, 0, e.target.z - spot.z);
+    return this._standAt(vrm, spot, e.target);
+  }
+
+  /** 腰を spot(水平)へ動かし、目標(水平)のほうを向く。足元(モデルの原点)を軸に回してから動く */
+  _standAt(vrm, spot, target) {
+    const hm = vrm.humanoid;
+    const hips = hm.getNormalizedBoneNode("hips");
+    const left = hm.getNormalizedBoneNode("leftUpperLeg");
+    const right = hm.getNormalizedBoneNode("rightUpperLeg");
+    if (!hips || !left || !right) return false;
+    const pos = (n) => n.getWorldPosition(new THREE.Vector3());
+    // 体の正面(水平): 左脚の付け根 − 右脚の付け根 に、上向きを掛ける(左 × 上 = 正面)
+    const front = pos(left).sub(pos(right)).cross(_v1.set(0, 1, 0));
+    front.y = 0;
+    if (front.lengthSq() < 1e-8) return false;
+    front.normalize();
+    const face = _v2.set(target.x - spot.x, 0, target.z - spot.z);
     if (face.lengthSq() < 1e-8) return false;
     face.normalize();
     const angle = Math.atan2(
@@ -3190,6 +3379,107 @@ export class IkManager {
     vrm.scene.position.x += spot.x - moved.x;
     vrm.scene.position.z += spot.z - moved.z;
     return true;
+  }
+
+  /**
+   * 届いていても、腕が他のモデルの体(や自分の体)を突き抜けたままなら、目標のまわりの別の立ち位置を試す。
+   * 近い順に試して、届いて、突き抜けない最初の位置を採る。どれも良くならなければ、元に戻す。
+   * @returns {boolean} 立ち位置を変えて、解き直したか
+   */
+  _moveToClear(vrm, active, goals, bodySurface, results, enabled) {
+    const others = bodySurface?.filter((e) => e.other);
+    // 胴や脚が突き抜けているときも、立ち位置を変える(上体を倒して、他のモデルの上に覆いかぶさるときなど)
+    const bodyDepth = () => this._bodyHits(vrm, enabled, others).depth;
+    const bodyBlocked = bodyDepth() > BLOCK_DEPTH;
+    let worst = -1;
+    let worstDepth = BLOCK_DEPTH;
+    active.forEach(([chain, e], i) => {
+      if (!chain.endsWith("Hand")) return;
+      for (let o = e.anchor?.node; o; o = o.parent) if (o === vrm.scene) return;
+      if (results[i].depth > worstDepth) {
+        worst = i;
+        worstDepth = results[i].depth;
+      }
+    });
+    if (worst < 0 && bodyBlocked) {
+      worst = active.findIndex(([chain]) => chain.endsWith("Hand"));
+    }
+    if (worst < 0) return false;
+    const [chain, e] = active[worst];
+    // 同じ目標・同じ位置で、すでに探して見つからなかったなら、毎フレーム探し直さない(目標か位置が変わるまで)
+    const key = [...e.target.toArray(), ...vrm.scene.position.toArray()]
+      .map((v) => v.toFixed(3)).join();
+    if (e.clearKey === key) return false;
+    e.clearKey = key;
+    const hm = vrm.humanoid;
+    const side = IK_CHAINS[chain].side;
+    const hips = hm.getNormalizedBoneNode("hips");
+    const arm = ["UpperArm", "LowerArm", "Hand"].map((n) =>
+      hm.getNormalizedBoneNode(`${side}${n}`)
+    );
+    if (!hips || arm.some((n) => !n)) return false;
+    const pos = (n) => n.getWorldPosition(new THREE.Vector3());
+    const armLength = pos(arm[0]).distanceTo(pos(arm[1])) +
+      pos(arm[1]).distanceTo(pos(arm[2]));
+    const obstacles = this._callbacks.getObstacles?.(vrm);
+    const here = pos(hips);
+    const floor = vrm.scene.position.y;
+    const top = Math.max(0.5, here.y - floor) * 2;
+    const spots = [];
+    for (const k of STANCE_SHRINK) {
+      for (let a = 0; a < Math.PI * 2 - 1e-6; a += STANCE_STEP) {
+        const x = e.target.x + Math.cos(a) * armLength * k;
+        const z = e.target.z + Math.sin(a) * armLength * k;
+        if (!this._stanceFree(obstacles, x, z, floor, top)) continue;
+        spots.push({ x, z, d: Math.hypot(x - here.x, z - here.z) });
+      }
+    }
+    spots.sort((p, q) => p.d - q.d);
+    // 試す前の状態(元に戻すため)
+    const names = Object.keys(hm.humanBones ?? {});
+    const nodes = names.map((n) => hm.getNormalizedBoneNode(n)).filter(Boolean);
+    const saved = {
+      q: nodes.map((n) => n.quaternion.clone()),
+      hp: hips.position.clone(),
+      p: vrm.scene.position.clone(),
+      r: vrm.scene.quaternion.clone(),
+      results,
+    };
+    const restore = () => {
+      nodes.forEach((n, i) => n.quaternion.copy(saved.q[i]));
+      hips.position.copy(saved.hp);
+      vrm.scene.position.copy(saved.p);
+      vrm.scene.quaternion.copy(saved.r);
+      vrm.scene.updateMatrixWorld(true);
+    };
+    let best = null;
+    for (const spot of spots.slice(0, CLEAR_TRIES)) {
+      restore();
+      if (!this._standAt(vrm, spot, e.target)) continue;
+      vrm.scene.updateMatrixWorld(true);
+      for (const [, en] of active) this._followAnchor(en);
+      const r = solveChains(vrm, goals, bodySurface);
+      if (!r) continue;
+      const err = Math.max(...r.map((x) => x.posErr));
+      const depth = Math.max(...r.map((x) => x.depth), bodyDepth());
+      const score = err + depth * 2;
+      if (!best || score < best.score) {
+        best = { score, spot };
+      }
+      if (err <= WALK_TRIGGER && depth < BLOCK_DEPTH) return true; // 良い位置が見つかった
+    }
+    // どれも良くならなければ、いちばんよかった位置(元より良ければ)か、元の位置
+    restore();
+    const base = Math.max(...results.map((x) => x.posErr)) +
+      Math.max(...results.map((x) => x.depth), bodyDepth()) * 2;
+    if (best && best.score < base - 1e-3) {
+      this._standAt(vrm, best.spot, e.target);
+      vrm.scene.updateMatrixWorld(true);
+      for (const [, en] of active) this._followAnchor(en);
+      solveChains(vrm, goals, bodySurface);
+      return true;
+    }
+    return false;
   }
 
   /** プロジェクト保存用 */
