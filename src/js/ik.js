@@ -38,9 +38,18 @@ const HIP_BEND_RANGE = [0, 1.4]; // rad(0° 〜 80°。後ろへは反らさな�
 // 立ち位置の障害物の判定。体の足元の円(半径 m)が、物の箱や他のモデルの体にかからないところを選ぶ
 const STANCE_RADIUS = 0.2;
 const BLOCK_DEPTH = 0.01; // 腕の入り込みがこれ(m)より深いと、体を突き抜けているとみなして、立ち位置を変える
+const SELF_TRUNK = ["spine", "chest", "upperChest"];
+const SELF_WEIGHT = 2; // 太ももや膝が自分の胴にめり込む深さ(m)を、目標の誤差(m)に対してどれだけ重く見るか
+// [脚の骨, 次の骨(あれば、その間の t の位置), t, 半径]
+const SELF_LEG_SAMPLES = [
+  ["upper", "lower", 0.6, 0.08],
+  ["upper", "lower", 0.9, 0.07],
+  ["lower", null, 0, 0.06],
+];
 const DEPENETRATE_ITERATIONS = 4;
 const DEPENETRATE_MIN = 0.003; // 体が他のモデルにこれ(m)より入り込んでいれば、押し出す
-const CLEAR_TRIES = 8; // 突き抜けないときに試す、立ち位置の数
+const CLEAR_TRIES = 8;
+const CLEAR_SEARCHES = 2; // 同じ目標で、立ち位置を探す回数の上限 // 突き抜けないときに試す、立ち位置の数
 const STANCE_STEP = Math.PI / 9; // 立ち位置の候補を探す角度の刻み
 const STANCE_SHRINK = [1, 0.85, 0.7]; // 目標からの距離を、遠い順に(近いほど届きやすい)
 const STANCE_LOW = 0.15; // この高さより低い物(敷物など)は、またいで立てるので障害物にしない
@@ -123,6 +132,7 @@ const WALK_TRIGGER = 0.02; // 手がこれ(m)以上届かないとき、届く�
 // 移動先の、目標までの水平距離(腕の長さに対する割合)。最初は楽に届く距離、それでも届かなければ、さらに近づく
 // (これより近いと、目標が体の幅の中に入って、手が置けなくなる)
 const STAND_RATIOS = [1.0, 0.7];
+const RETRY_BUDGET_MS = 600; // 初期姿勢から解き直す試しの、時間の上限
 const RETRY_INTERVAL = 24; // 解き直しの間隔(フレーム)
 const TRUNK_BONES = ["spine", "chest", "upperChest"];
 // 手足の関節ではなく、体を曲げる関節(初期姿勢に戻す対象から外す)
@@ -135,6 +145,7 @@ const hipBendState = new WeakMap(); // hips ノード → 基準になる値
 const LEG_REACH_RATIO = 0.998; // 脚が伸び切る手前(脚の長さの割合)から、足が浮かないよう、解にペナルティをかける
 const LEG_REACH_WEIGHT = 20; // 足が浮く長さ(m)を、目標の誤差(m)に対してどれだけ重く見るか
 const HIP_MOVE_MIN = 0.01; // これ以上(m)動かしていたら、しゃがんでいる状態とみなす
+const HIP_MIN_HEIGHT = 0.4; // しゃがんだときの腰の高さの下限(脚の長さに対する割合。床からの高さ)
 const HIP_MOVE_RANGE = {
   // 脚の長さ(付け根から足首まで)に対する割合
   x: [-0.12, 0.12],
@@ -882,7 +893,13 @@ function prepare(vrm, goals, bodySurface = null) {
           const w = j.axes[axis];
           if (!w) return;
           const [lo, hi] = HIP_MOVE_RANGE[axis];
-          params.push({ joint, k, w, lo: lo * st.len, hi: hi * st.len });
+          let low = lo * st.len;
+          if (axis === "y") {
+            // 立ち位置の再計算で、基準の姿勢が少しずつ低くなって、腰が床まで沈み続けないよう、腰の高さの下限を決める
+            const baseY = node.getWorldPosition(_v1).y - vrm.scene.position.y - st.t.y;
+            low = Math.max(low, Math.min(0, HIP_MIN_HEIGHT * st.len - baseY));
+          }
+          params.push({ joint, k, w, lo: low, hi: hi * st.len });
         });
         continue;
       }
@@ -1331,6 +1348,38 @@ function solveCore(vrm, goals, bodySurface) {
   const hipSt = ctx.joints.find((j) => j.move)?.state ?? null; // 腰を動かせるとき、足が浮かないかも見る
   const legRows = hipSt ? hipSt.legs.length : 0;
   const overOf = () => hipSt ? hipSt.legs.reduce((m, l) => m + l.over, 0) : 0;
+  // 腰を曲げる・しゃがむときに、太ももや膝が、自分の胴(spine・chest・upperChest)にめり込まないかも見る
+  const trunkShapes = hipSt
+    ? (bodySurface ?? []).filter((e) => !e.other && SELF_TRUNK.includes(e.name))
+    : [];
+  const selfRows = trunkShapes.length ? hipSt.legs.length : 0;
+  const selfDepth = new Float64Array(selfRows);
+  const selfOf = () => {
+    if (!selfRows) return 0;
+    const u = Math.min(1.5, Math.max(0.6, hipSt.len / 0.82));
+    const mats = trunkShapes.map((e) =>
+      e.node && e.offset
+        ? new THREE.Matrix4().multiplyMatrices(e.node.matrixWorld, e.offset)
+        : e.bone.matrixWorld
+    );
+    let sum = 0;
+    for (let i = 0; i < selfRows; i++) {
+      const leg = hipSt.legs[i];
+      let worst = 0;
+      for (const [a, b, t, r] of SELF_LEG_SAMPLES) {
+        const nodeA = leg[a], nodeB = b && leg[b];
+        const p = nodeA.getWorldPosition(_v2);
+        if (nodeB) p.lerp(nodeB.getWorldPosition(_v3), t);
+        trunkShapes.forEach(({ shape }, k) => {
+          const d = shape.calculateCollision(mats[k], p, r * u, _dir);
+          if (d < 0) worst = Math.max(worst, -d);
+        });
+      }
+      selfDepth[i] = worst;
+      sum += worst;
+    }
+    return sum;
+  };
   const n = params.length;
   const initial = params.map((p) => p.joint.e[p.k]);
   const pinned = new Array(n).fill(false);
@@ -1363,11 +1412,11 @@ function solveCore(vrm, goals, bodySurface) {
     });
     findPenetrations(ctx, bodySurface, _hits);
     const maxDepth = _hits.reduce((m, h) => Math.max(m, h.depth), 0); // 入り込みの最大(帯の中は 0)
-    return { per, maxDepth, over: overOf() };
+    return { per, maxDepth, over: overOf(), self: selfOf() };
   };
-  const costOf = ({ per, maxDepth, over }) =>
+  const costOf = ({ per, maxDepth, over, self = 0 }) =>
     per.reduce((sum, p) => sum + p.posErr + p.rotErr * ROT_WEIGHT, 0) +
-    maxDepth + over * LEG_REACH_WEIGHT;
+    maxDepth + over * LEG_REACH_WEIGHT + self * SELF_WEIGHT;
 
   // 一番よかった姿勢にそろえるまでを 1 回の解として、体幹を固定した解 → 届かなければ体幹も使った解、の順に行う。
   // 腕だけで届くのに体幹まで曲げると、頭などが動いてしまうため
@@ -1384,7 +1433,7 @@ function solveCore(vrm, goals, bodySurface) {
       if (
         ev.per.every((p) =>
           p.posErr < POS_TOLERANCE && p.rotErr < ROT_TOLERANCE
-        ) && ev.maxDepth < 1e-3 && ev.over < 1e-3
+        ) && ev.maxDepth < 1e-3 && ev.over < 1e-3 && ev.self < 1e-3
       ) break;
       const cost = costOf(ev);
       if (cost < best.cost) best = { cost, e: snapshot() };
@@ -1393,13 +1442,18 @@ function solveCore(vrm, goals, bodySurface) {
       lastCost = cost;
 
       const hits = _hits.slice();
-      const rows = baseRows + hits.length + legRows;
+      const rows = baseRows + hits.length + legRows + selfRows;
       const rhs = new Array(rows).fill(0);
       const legRow = baseRows + hits.length; // 足が浮く分の行(あれば)
+      const selfRow = legRow + legRows; // 太ももや膝が、自分の胴にめり込む分の行(あれば)
       for (let i = 0; i < legRows; i++) {
         rhs[legRow + i] = hipSt.legs[i].over * LEG_REACH_WEIGHT;
       }
+      for (let i = 0; i < selfRows; i++) {
+        rhs[selfRow + i] = selfDepth[i] * SELF_WEIGHT;
+      }
       const baseOver = hipSt?.legs.map((l) => l.over);
+      const baseSelf = Array.from(selfDepth);
       ev.per.forEach((p, i) =>
         p.r.forEach((v, k) => (rhs[baseOffset[i] + k] = v))
       );
@@ -1423,6 +1477,14 @@ function solveCore(vrm, goals, bodySurface) {
         for (let i = 0; i < legRows; i++) {
           J[legRow + i][c] = (hipSt.legs[i].over - baseOver[i]) *
             LEG_REACH_WEIGHT / FD_DELTA;
+        }
+        if (selfRows) {
+          selfOf();
+          for (let i = 0; i < selfRows; i++) {
+            J[selfRow + i][c] = (selfDepth[i] - baseSelf[i]) * SELF_WEIGHT /
+              FD_DELTA;
+          }
+          baseSelf.forEach((v, i) => (selfDepth[i] = v)); // 次の未知数のために、元の値に戻す
         }
         for (let i = 0; i < nC; i++) {
           const ch = ctx.chains[i], b = base[i], o = baseOffset[i];
@@ -2943,14 +3005,36 @@ export class IkManager {
     if (!enabled.length) return;
     // 動きが行ったり来たりして止まらない(ぷるぷる)ときは、目標が変わるまで、体を動かすのをやめる
     const guard = this._guard(vrm, enabled);
+    // 何も変わっていなければ(目標も姿勢も、前回の結果のまま)、解いても同じなので、何もしない
+    const sig = this._signature(vrm, enabled);
+    if (guard.sigAfter === sig && guard.sigBefore === sig) return;
+    guard.sigBefore = sig;
     const canMove = this.walk && !guard.frozen;
     const t0 = this._pose(vrm);
-    this._solveAll(vrm, enabled, canMove);
+    let pending = this._solveAll(vrm, enabled, canMove);
     // 全身が、他のモデルの体を突き抜けていれば、押し出して、手足を解き直す
     if (canMove && this._depenetrate(vrm, enabled)) {
-      this._solveAll(vrm, enabled, false);
+      pending = this._solveAll(vrm, enabled, false) || pending;
     }
     this._watchMotion(vrm, guard, t0);
+    // 届いていない目標の「初期姿勢から解き直す」が、まだ残っていれば、次のフレームも続ける
+    guard.sigAfter = pending ? null : this._signature(vrm, enabled);
+  }
+
+  /** 目標と、モデルの姿勢(全ボーンの回転・腰の位置・置き場所)、他のモデルの置き場所の指紋 */
+  _signature(vrm, enabled) {
+    const v = [];
+    for (const [c, e] of enabled) {
+      v.push(c, ...e.target.toArray(), e.roll ?? 0, e.part, e.normal ? 1 : 0);
+    }
+    const hm = vrm.humanoid;
+    for (const name of Object.keys(hm.humanBones ?? {})) {
+      const n = hm.getNormalizedBoneNode(name);
+      if (n) v.push(...n.quaternion.toArray());
+    }
+    v.push(...hm.getNormalizedBoneNode("hips").position.toArray(), ...this._pose(vrm));
+    for (const m of this._callbacks.getOtherPoses?.(vrm) ?? []) v.push(...m);
+    return v.map((x) => (typeof x === "number" ? Math.round(x * 1e5) : x)).join();
   }
 
   /** モデルの置き場所(水平位置と向き) */
@@ -3070,6 +3154,7 @@ export class IkManager {
     return moved;
   }
 
+  /** @returns {boolean} 届かない手が、まだ「初期姿勢から解き直す」を試していないとき true */
   _solveAll(vrm, enabled, canMove) {
     vrm.scene.updateMatrixWorld(true);
     // 足が指定されていれば、先にその場所へ足を置く。以降の腰の移動(しゃがみ)も、その足の位置を保つ
@@ -3084,7 +3169,7 @@ export class IkManager {
       vrm.scene.updateMatrixWorld(true);
     }
     const active = enabled.filter(([chain]) => !IK_CHAINS[chain].foot);
-    if (!active.length) return;
+    if (!active.length) return false;
     const bodySurface = this._surfaces(vrm) ?? null;
     for (const [, e] of active) this._followAnchor(e);
     const goals = active.map(([chain, e]) => {
@@ -3092,7 +3177,7 @@ export class IkManager {
       return this._goal(chain, e);
     });
     let results = solveChains(vrm, goals, bodySurface);
-    if (!results) return;
+    if (!results) return false;
     // 届かない目標があれば、確実に届く立ち位置へ移動してから(1 回で)解き直す。それでも届かなければ、さらに近づく
     for (
       let attempt = 0;
@@ -3121,8 +3206,10 @@ export class IkManager {
         results[i].depth > STUCK_DEPTH;
       e.stuck = bad ? (e.stuck ?? 0) + 1 : 0;
       e.cooldown = Math.max(0, (e.cooldown ?? 0) - 1);
-      if (e.stuck >= STUCK_FRAMES && e.cooldown === 0) {
+      const tkey = this._targetKey(e);
+      if (e.stuck >= STUCK_FRAMES && e.cooldown === 0 && e.retryKey !== tkey) {
         e.cooldown = RETRY_INTERVAL;
+        e.retryKey = tkey; // 同じ目標では、1 回だけ(1 回が重く、やっても変わらないことが多いので)
         this._retryFromRest(
           vrm,
           chain,
@@ -3136,6 +3223,14 @@ export class IkManager {
     });
     // 握り: 手の姿勢が決まったあとで、指を曲げる
     for (const [chain, e] of active) this._applyGrip(vrm, chain, e);
+    return active.some(([, e], i) =>
+      (results[i].posErr > RETRY_ERROR || results[i].depth > STUCK_DEPTH) &&
+      e.retryKey !== this._targetKey(e)
+    );
+  }
+
+  _targetKey(e) {
+    return [...e.target.toArray(), e.roll ?? 0].map((v) => +v.toFixed(3)).join();
   }
 
   /** 腕を初期姿勢に戻して解き直し、今より明らかに良くなったときだけ、その姿勢にする */
@@ -3167,7 +3262,10 @@ export class IkManager {
     let adopted = false;
     // 体幹についた目標は、体幹を動かすと目標ごと動いて、いつまでも届かず揺れ続けるので、体幹は動かさない
     const seeds = e.anchor?.trunk ? ["rest", "via"] : ["rest", "via", "free"];
+    const started = performance.now();
     for (const seed of seeds) {
+      // 1 回の解き直しで、画面が止まりすぎないよう、時間の上限を超えたら、残りの試しはやめる
+      if (seed !== seeds[0] && performance.now() - started > RETRY_BUDGET_MS) break;
       // free: 体幹を固定していると届かないときの最後の手段として、体幹も動かして解く
       const gs = seed === "free"
         ? goals.map((g) => ({ ...g, lockTrunk: false }))
@@ -3308,6 +3406,21 @@ export class IkManager {
     return true;
   }
 
+  /**
+   * 向き直る先。手が複数あるときは、どれか 1 つの手のほうへ向くと、もう片方の手が横に逃げてしまうので、手の目標の真ん中を向く
+   */
+  _aim(vrm, active, e) {
+    const hands = active.filter(([chain, en]) => {
+      if (!chain.endsWith("Hand")) return false;
+      for (let o = en.anchor?.node; o; o = o.parent) if (o === vrm.scene) return false;
+      return true;
+    });
+    if (hands.length < 2) return e.target;
+    const aim = new THREE.Vector3();
+    for (const [, en] of hands) aim.add(en.target);
+    return aim.multiplyScalar(1 / hands.length);
+  }
+
   _moveToStance(vrm, active, results, ratio) {
     let worst = -1;
     let worstErr = WALK_TRIGGER;
@@ -3334,7 +3447,8 @@ export class IkManager {
     const pos = (n) => n.getWorldPosition(new THREE.Vector3());
     const armLength = pos(arm[0]).distanceTo(pos(arm[1])) +
       pos(arm[1]).distanceTo(pos(arm[2]));
-    const toTarget = e.target.clone().sub(pos(hips));
+    const aim = this._aim(vrm, active, e);
+    const toTarget = aim.clone().sub(pos(hips));
     toTarget.y = 0;
     const dist = toTarget.length();
     const stand = armLength * ratio;
@@ -3346,11 +3460,11 @@ export class IkManager {
     const spot = this._freeStance(
       vrm,
       desired,
-      e.target,
+      aim,
       STANCE_SHRINK.map((k) => stand * k),
       here,
     );
-    return this._standAt(vrm, spot, e.target);
+    return this._standAt(vrm, spot, aim);
   }
 
   /** 腰を spot(水平)へ動かし、目標(水平)のほうを向く。足元(モデルの原点)を軸に回してから動く */
@@ -3388,6 +3502,7 @@ export class IkManager {
    */
   _moveToClear(vrm, active, goals, bodySurface, results, enabled) {
     const others = bodySurface?.filter((e) => e.other);
+    if (!others?.length) return false; // 他のモデルがいなければ、立ち位置を変えても、自分の体への入り込みは変わらない
     // 胴や脚が突き抜けているときも、立ち位置を変える(上体を倒して、他のモデルの上に覆いかぶさるときなど)
     const bodyDepth = () => this._bodyHits(vrm, enabled, others).depth;
     const bodyBlocked = bodyDepth() > BLOCK_DEPTH;
@@ -3407,10 +3522,11 @@ export class IkManager {
     if (worst < 0) return false;
     const [chain, e] = active[worst];
     // 同じ目標・同じ位置で、すでに探して見つからなかったなら、毎フレーム探し直さない(目標か位置が変わるまで)
-    const key = [...e.target.toArray(), ...vrm.scene.position.toArray()]
-      .map((v) => v.toFixed(3)).join();
-    if (e.clearKey === key) return false;
-    e.clearKey = key;
+    const key = e.target.toArray().map((v) => v.toFixed(3)).join();
+    if (e.clearKey !== key) Object.assign(e, { clearKey: key, clearCount: 0 });
+    if (e.clearCount >= CLEAR_SEARCHES) return false; // 同じ目標では、何度も探さない(1 回が重いので)
+    e.clearCount++;
+    const aim = this._aim(vrm, active, e);
     const hm = vrm.humanoid;
     const side = IK_CHAINS[chain].side;
     const hips = hm.getNormalizedBoneNode("hips");
@@ -3428,8 +3544,8 @@ export class IkManager {
     const spots = [];
     for (const k of STANCE_SHRINK) {
       for (let a = 0; a < Math.PI * 2 - 1e-6; a += STANCE_STEP) {
-        const x = e.target.x + Math.cos(a) * armLength * k;
-        const z = e.target.z + Math.sin(a) * armLength * k;
+        const x = aim.x + Math.cos(a) * armLength * k;
+        const z = aim.z + Math.sin(a) * armLength * k;
         if (!this._stanceFree(obstacles, x, z, floor, top)) continue;
         spots.push({ x, z, d: Math.hypot(x - here.x, z - here.z) });
       }
@@ -3455,7 +3571,7 @@ export class IkManager {
     let best = null;
     for (const spot of spots.slice(0, CLEAR_TRIES)) {
       restore();
-      if (!this._standAt(vrm, spot, e.target)) continue;
+      if (!this._standAt(vrm, spot, aim)) continue;
       vrm.scene.updateMatrixWorld(true);
       for (const [, en] of active) this._followAnchor(en);
       const r = solveChains(vrm, goals, bodySurface);
@@ -3473,7 +3589,7 @@ export class IkManager {
     const base = Math.max(...results.map((x) => x.posErr)) +
       Math.max(...results.map((x) => x.depth), bodyDepth()) * 2;
     if (best && best.score < base - 1e-3) {
-      this._standAt(vrm, best.spot, e.target);
+      this._standAt(vrm, best.spot, aim);
       vrm.scene.updateMatrixWorld(true);
       for (const [, en] of active) this._followAnchor(en);
       solveChains(vrm, goals, bodySurface);

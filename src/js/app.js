@@ -213,6 +213,27 @@ class App {
         this._models.map((m) => m.vrm).filter((v) => v !== vrm),
       withObjectTest: (fn) => this._objects.withInsideTest(fn),
       // 立ち位置の障害物: 置いた物の箱と、他のモデルの体(腰を中心にした円柱)
+      // 他のモデル・置いた物の位置と向き(これが変われば、IK を解き直す)
+      getOtherPoses: (vrm) => {
+        const poses = [];
+        for (const m of this._models) {
+          if (m.vrm === vrm) continue;
+          const hips = m.vrm.humanoid.getNormalizedBoneNode("hips");
+          poses.push([
+            ...m.vrm.scene.position.toArray(),
+            ...m.vrm.scene.quaternion.toArray(),
+            ...(hips ? hips.getWorldPosition(new THREE.Vector3()).toArray() : []),
+          ]);
+        }
+        for (const root of this._objects.roots()) {
+          poses.push([
+            ...root.position.toArray(),
+            ...root.quaternion.toArray(),
+            ...root.scale.toArray(),
+          ]);
+        }
+        return poses;
+      },
       getObstacles: (vrm) => {
         const boxes = this._objects.roots().map((root) =>
           new THREE.Box3().setFromObject(root)
