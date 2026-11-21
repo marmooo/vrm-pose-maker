@@ -857,7 +857,7 @@ function prepareEnd(vrm, chainName, end, handPoints, part = "center") {
     hasPalm: !!spec.palm || !!spec.foot,
     foot: !!spec.foot,
     samples,
-    boxCount: spec.foot ? 5 : 4, // 置いた物の箱を避ける点の数(先頭から。手首から先と足は、面に触れるので除く)
+    limbCount: spec.foot ? 5 : 4, // 置いた物を避ける点の数(先頭から。手首から先と足は、面に触れるので除く)
     samplePos: new Float64Array(samples.length * 3),
     handPoints,
     contactNormal: null, // 面に置くとき、面の外向きの法線
@@ -1288,43 +1288,25 @@ function findPenetrations(ctx, bodySurface, out) {
       }
     });
   });
-  // 置いた物(箱)の中を、腕や脚が通り抜けないようにする
-  if (bodySurface?.boxes?.length) {
+  // 置いた物(球で敷き詰めた表面)の中を、腕や脚が通り抜けないようにする
+  if (bodySurface?.grids?.length) {
     ctx.chains.forEach((c, ci) => {
-      for (let k = 0; k < Math.min(c.boxCount ?? 0, c.samples.length); k++) {
+      for (let k = 0; k < Math.min(c.limbCount ?? 0, c.samples.length); k++) {
         const x = c.samplePos[k * 3],
           y = c.samplePos[k * 3 + 1],
           z = c.samplePos[k * 3 + 2];
         const rr = c.samples[k].r + COLLISION_BAND;
-        for (const b of bodySurface.boxes) {
-          const qx = Math.max(b.min.x, Math.min(b.max.x, x));
-          const qy = Math.max(b.min.y, Math.min(b.max.y, y));
-          const qz = Math.max(b.min.z, Math.min(b.max.z, z));
-          let dx = x - qx, dy = y - qy, dz = z - qz;
-          let dist = Math.hypot(dx, dy, dz);
-          if (dist < 1e-9) {
-            // 箱の中: いちばん近い面から外へ
-            const faces = [
-              [x - b.min.x, -1, 0, 0],
-              [b.max.x - x, 1, 0, 0],
-              [y - b.min.y, 0, -1, 0],
-              [b.max.y - y, 0, 1, 0],
-              [z - b.min.z, 0, 0, -1],
-              [b.max.z - z, 0, 0, 1],
-            ];
-            const f = faces.reduce((m, v) => (v[0] < m[0] ? v : m));
-            dist = -f[0];
-            dx = f[1];
-            dy = f[2];
-            dz = f[3];
-          } else {
-            dx /= dist;
-            dy /= dist;
-            dz /= dist;
-          }
-          const depth = rr - dist;
-          if (depth > 0) {
-            out.push({ ci, k, depth: depth - COLLISION_BAND, dx, dy, dz });
+        for (const g of bodySurface.grids) {
+          const h = g.deepest(x, y, z, rr);
+          if (h) {
+            out.push({
+              ci,
+              k,
+              depth: h.depth - COLLISION_BAND,
+              dx: h.dx,
+              dy: h.dy,
+              dz: h.dz,
+            });
           }
         }
       }
@@ -2972,7 +2954,7 @@ export class IkManager {
    */
   _surfaces(vrm) {
     const s = this._surfacesRaw(vrm);
-    if (s) s.boxes = this._frameBoxes ?? null; // 置いた物の箱(solveCore が、腕や脚の通り抜けを防ぐのに使う)
+    if (s) s.grids = this._frameGrids ?? null; // 置いた物の球(solveCore が、腕や脚の通り抜けを防ぐのに使う)
     return s;
   }
 
@@ -3102,9 +3084,9 @@ export class IkManager {
     guard.sigBefore = sig;
     const canMove = this.walk && !guard.frozen;
     const floorY = vrm.scene.position.y;
-    this._frameBoxes =
-      this._callbacks.getObstacles?.(vrm)?.boxes.filter((b) =>
-        b.max.y >= floorY + STANCE_LOW
+    this._frameGrids =
+      this._callbacks.getObstacles?.(vrm)?.grids?.filter((g) =>
+        g.box.max.y >= floorY + STANCE_LOW
       ) ?? null;
     const t0 = this._pose(vrm);
     let pending = this._solveAll(vrm, enabled, canMove);
