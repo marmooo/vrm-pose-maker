@@ -64,6 +64,36 @@ function tile(root, cell) {
 }
 const _hv = new THREE.Vector3();
 
+/** メッシュの全頂点を、ルート座標で集める(いちばん低い点を、正確に求めるため) */
+function collectVertices(root) {
+  root.updateWorldMatrix(true, true);
+  const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
+  const toRoot = new THREE.Matrix4();
+  const chunks = [];
+  let total = 0;
+  root.traverse((o) => {
+    if (!o.isMesh || !o.geometry?.attributes.position) return;
+    const pos = o.geometry.attributes.position;
+    toRoot.multiplyMatrices(inv, o.matrixWorld);
+    const a = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i++) {
+      _hv.fromBufferAttribute(pos, i).applyMatrix4(toRoot);
+      a[i * 3] = _hv.x;
+      a[i * 3 + 1] = _hv.y;
+      a[i * 3 + 2] = _hv.z;
+    }
+    chunks.push(a);
+    total += a.length;
+  });
+  const all = new Float32Array(total);
+  let at = 0;
+  for (const c of chunks) {
+    all.set(c, at);
+    at += c.length;
+  }
+  return all;
+}
+
 /** 1 つの物の、球の集まり。物が動いたら、世界座標の球を取り直す */
 class ObjectGrid {
   constructor(root) {
@@ -81,6 +111,8 @@ class ObjectGrid {
       this.local[i++] = c[1];
       this.local[i++] = c[2];
     }
+    this.vertices = collectVertices(root);
+    this.lowestY = 0; // 物の、いちばん低い点の高さ(ワールド座標の y)
     this.radius = cell * RADIUS;
     this.count = cells.size;
     this.world = new Float32Array(this.local.length);
@@ -123,6 +155,13 @@ class ObjectGrid {
       else this.cells.set(key, [i]);
     }
     this.box.expandByScalar(this.worldRadius);
+    let lowest = Infinity;
+    const v = this.vertices;
+    for (let i = 0; i < v.length; i += 3) {
+      const y = e[1] * v[i] + e[5] * v[i + 1] + e[9] * v[i + 2] + e[13];
+      if (y < lowest) lowest = y;
+    }
+    this.lowestY = lowest;
     return this;
   }
 

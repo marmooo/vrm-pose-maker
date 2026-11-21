@@ -21,7 +21,6 @@ import {
 import { LightPanel } from "./light-panel.js";
 import { LightGizmo } from "./light-gizmo.js";
 import { IkManager } from "./ik.js";
-import { ObjectSpheres } from "./object-spheres.js";
 import { IkInput } from "./ik-input.js";
 import {
   applyMaterialsSnapshot,
@@ -140,7 +139,6 @@ class App {
     });
 
     // VRM 以外の 3D オブジェクト(GLB / FBX)。操作(拡大率・回転)は「オブジェクト」タブに出す。
-    this._objectSpheres = new ObjectSpheres();
     this._objects = new SceneObjects(this._scene, {
       controlsEl: document.getElementById("object-controls"),
       onChange: () => this._syncSelectionUi(),
@@ -240,7 +238,7 @@ class App {
       },
       getObstacles: (vrm) => {
         const grids = this._objects.roots().map((root) =>
-          this._objectSpheres.get(root)
+          this._objects.spheres.get(root)
         );
         const boxes = grids.map((g) => g.box);
         const cylinders = [];

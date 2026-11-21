@@ -12,6 +12,7 @@ import * as THREE from "three";
 import { ContactIndex } from "./contact-index.js";
 import { createGLTFLoader } from "./gltf-loader.js";
 import { ObjectGizmo } from "./object-gizmo.js";
+import { ObjectSpheres } from "./object-spheres.js";
 import { Exporter } from "./exporter.js";
 import { tr } from "./i18n.js";
 
@@ -36,6 +37,7 @@ export class SceneObjects {
     this._controlsEl = controlsEl;
     this._onChange = onChange ?? null;
     this._gizmo = new ObjectGizmo(sceneManager); // キャンバス上の回転・拡大縮小
+    this.spheres = new ObjectSpheres(); // 物の表面を敷き詰めた球(IK の当たり判定と、接地の計測に使う)
     this._items = [];
     this._modelRoot = null; // 物を選んでいないとき、ギズモを出すモデルの root
     this._selectedId = null;
@@ -313,10 +315,26 @@ export class SceneObjects {
 
   /** 毎フレーム呼ばれる。選択枠を物の動きに追従させる。 */
   update() {
+    this._keepAboveGround();
     this._gizmo.update();
     if (!this._helper) return;
     this._helper.update();
     this._helper.visible = true;
+  }
+
+  /**
+   * 「地面より上に保つ」がオンのとき、物が床(y=0)にめり込まないようにする(めり込む分だけ持ち上げる)。
+   * モデルと同じく片側だけの制約で、浮いている分には何もしない。
+   */
+  _keepAboveGround() {
+    if (!this._scene.getGroundContact()) return;
+    for (const item of this._items) {
+      const lowest = this.spheres.get(item.root).lowestY;
+      if (lowest < -1e-5) {
+        item.root.position.y -= lowest;
+        item.root.updateMatrixWorld(true);
+      }
+    }
   }
 
   /** 撮影・書き出しに選択枠が映り込まないよう、次のフレームまで隠す。 */
