@@ -363,8 +363,12 @@
       "order": "ZXY",
       "x": {
         "range": [
+          -50,
+          20
+        ],
+        "randomRange": [
           -25,
-          45
+          20
         ],
         "motion": "dorsiflexion(-: toes up)/plantarflexion(+: toes down)"
       },

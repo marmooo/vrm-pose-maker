@@ -31,9 +31,14 @@ const ARM_AXES = {
 const TRUNK_AXES = { x: 0.12, y: 0.06, z: 0.12 };
 // 股関節から体を曲げる(前屈): 骨盤を前へ倒し、脚は今の向きのまま残す。つま先や低い所へ届かせる
 const HIP_BEND_AXES = { x: 0.02 }; // 腕や背骨で届くうちは使わず、届かないときだけ曲げる
-const SPREAD_WEIGHT = 0.05; // 足を広げる量の動きやすさ。胴や手で届かず、膝が胴にめり込むときだけ使うよう、小さくする
-const SPREAD_MAX = 0.4; // 足を広げる量の上限(脚の長さに対する割合。左右の足の間隔が増える分)
+const SHIFT_WEIGHT = 0.01; // 置いていない足を動かす量の動きやすさ。届かない・胴にめり込むときだけ使うよう、小さくする
+const SHIFT_OUT = 0.4; // 置いていない足を、外へ広げる量の上限(脚の長さに対する割合)
+const SHIFT_FRONT = 0.6; // 置いていない足を、前へ出す量の上限(同)
+const SHIFT_BACK = 0.3; // 置いていない足を、後ろへ引く量の上限(同)
 const HIP_MOVE_AXES = { x: 0.001, y: 0.02, z: 0.003 }; // 腰の平行移動(m)。前屈と同じく、腕や背骨で届かないときだけ使う
+const LIMB_ROT_RETRY = 0.35; // 膝・すねの向きがこれ(rad)以上ずれたまま続けば、初期姿勢から解き直す
+const RETRY_SUPPORT_MOVE = 0.03; // 解き直しで、支えの足がこれ(m)以上動いた解は採らない
+const HIP_RELEASE_CAP = 0.02; // 腰を戻す条件に足す、今の姿勢の誤差の上限(m)
 const HIP_BENT_MIN = 0.03; // これ以上(rad)曲げていたら、曲げている状態とみなす
 const HIP_RELEASE_ERROR = 0.002; // 曲げている腰を戻すには、曲げなくても誤差がこれ以下(m)で届くこと
 const HIP_BEND_RANGE = [0, 1.4]; // rad(0° 〜 80°。後ろへは反らさない)。背骨(最大60°)と合わせて、深い前屈になる
@@ -61,6 +66,7 @@ const FOOT_SQUAT_ALLOWANCE = 0.15; // 腰を下げて届かせる分(脚の長�
 const FOOT_ANKLE_RATIO = 0.12; // 足首の高さ(脚の長さに対する割合)
 const FOOT_STAND_RATIO = 0.97; // 足を置くとき、脚をここまで伸ばせば届くとみなす
 const FOOT_SQUAT_STARTS = [0.025, 0.05, 0.1, 0.2]; // 足を置くとき、腰を下げる量の初期値(脚の長さに対する割合)
+const LIMB_SQUAT_STARTS = [0.1, 0.2, 0.3, 0.4, 0.5]; // 膝・すねを床に付けるときの、腰を下げる量の初期値(深く下げる)
 const FOOT_HIP_MOVE_Y = 0.1; // 足を置くときの、腰を下げやすさ(手のときより大きく動かす)
 const LEG_AXES = {
   upperLeg: { x: 1, y: 0.4, z: 1 },
@@ -136,6 +142,31 @@ const WALK_TRIGGER = 0.02; // 手がこれ(m)以上届かないとき、届く�
 // 移動先の、目標までの水平距離(腕の長さに対する割合)。最初は楽に届く距離、それでも届かなければ、さらに近づく
 // (これより近いと、目標が体の幅の中に入って、手が置けなくなる)
 const STAND_RATIOS = [1.0, 0.7];
+// 立ったままでは届かないとき、体を横たえて届かせる(うつ伏せ・仰向け・横向き)。頭の向きは水平に 8 方向、腹の向きを 4 通りから選ぶ
+const LIE_HEADINGS = 8;
+const LIE_PREFERENCE = { prone: 0, left: 0.1, right: 0.1, supine: 0.4 }; // 同じくらい届くなら、うつ伏せ・横向きを選ぶ
+const LIE_SHOULDER_RATIO = 0.6; // 肩から目標までの水平距離(腕の長さに対する割合)
+const LIE_CANDIDATES = 3;
+const LIE_AFTER = 12; // 立ったままで届かない状態が、解く呼び出しでこれだけ続いたら、体を横たえてみる
+const LIE_PATIENCE = 8; // 横たえたあと、届かないままこれだけ続いたら、立ち姿に戻す(回数は、解く呼び出しの数)
+const LIE_PASSES = 6; // 候補を解く回数の上限(届いたら、そこで止める)
+const LIE_DONE_ERROR = 0.015; // 手の位置の誤差がこれ(m)より小さければ、届いたとみなす // 届くかの簡単な判定を通った候補のうち、実際に解いて比べる数
+const LIE_BONES = [
+  "hips",
+  "spine",
+  "chest",
+  "upperChest",
+  "neck",
+  "head",
+  "leftUpperLeg",
+  "leftLowerLeg",
+  "leftFoot",
+  "leftToes",
+  "rightUpperLeg",
+  "rightLowerLeg",
+  "rightFoot",
+  "rightToes",
+];
 const RETRY_BUDGET_MS = 600; // 初期姿勢から解き直す試しの、時間の上限
 const RETRY_INTERVAL = 24; // 解き直しの間隔(フレーム)
 const TRUNK_BONES = ["spine", "chest", "upperChest"];
@@ -188,6 +219,24 @@ const legPoseOut = () => ({
 });
 const _lp = legPoseOut();
 
+/** ボーンの向きを、可動域(bone-limits.json)の中へ収める */
+const _fe = new THREE.Euler();
+function clampToLimit(node, name) {
+  const lim = getBoneLimit(name);
+  if (!lim) return;
+  _fe.setFromQuaternion(node.quaternion, lim.order);
+  let changed = false;
+  for (const axis of ["x", "y", "z"]) {
+    const v = _fe[axis];
+    const c = Math.min(lim[axis][1], Math.max(lim[axis][0], v));
+    if (c !== v) {
+      _fe[axis] = c;
+      changed = true;
+    }
+  }
+  if (changed) node.quaternion.setFromEuler(_fe);
+}
+
 function captureHipBend(vrm) {
   const hm = vrm.humanoid;
   const hips = hm.getNormalizedBoneNode("hips");
@@ -195,6 +244,7 @@ function captureHipBend(vrm) {
     upper: hm.getNormalizedBoneNode(`${side}UpperLeg`),
     lower: hm.getNormalizedBoneNode(`${side}LowerLeg`),
     foot: hm.getNormalizedBoneNode(`${side}Foot`),
+    footName: `${side}Foot`,
   }));
   if (!hips) return null;
   for (const { upper, lower, foot } of legNodes) {
@@ -227,7 +277,9 @@ function captureHipBend(vrm) {
     return leg;
   });
   // 体の前方(膝が曲がる向き): 左脚から右脚への向き × 上 の逆 = 左 × 上
-  const side = _hv1.copy(legs[0].pin).sub(legs[1].pin);
+  // 足首ではなく股関節の位置から求める(足が左右で入れ替わった姿勢で取り直しても、前後が反転しない)
+  const side = _hv1.copy(l.upper.position).sub(r.upper.position)
+    .applyQuaternion(q0);
   const fwd = side.clone().cross(_hv2.set(0, 1, 0));
   if (fwd.lengthSq() < 1e-8) fwd.set(0, 0, 1);
   hipBendState.set(hips, {
@@ -239,7 +291,7 @@ function captureHipBend(vrm) {
     fwd: fwd.normalize(),
     len: Math.max(...legs.map((x) => x.l1 + x.l2)),
     t: new THREE.Vector3(), // 基準の姿勢からの、腰の平行移動
-    spread: 0, // 置いていない足の、左右の間隔を広げる量(m)
+    shift: [0, 0, 0, 0], // 置いていない足を動かす量(m)。[左脚の外向き, 左脚の前向き, 右脚の外向き, 右脚の前向き]
     side: side.clone().setY(0).normalize(), // 左脚へ向く水平の向き(親の座標系)
     sig: new Float64Array(7 + 2 * 12),
   });
@@ -282,10 +334,12 @@ function solveLeg(hips, st, leg) {
   const lp = legPose(hips, leg, _lp);
   const { l1, l2 } = leg;
   const to = _hv1.copy(leg.pin).sub(lp.hip);
-  if (st.spread > 0) {
-    to.addScaledVector(
-      st.side,
-      leg === st.legs[0] ? st.spread / 2 : -st.spread / 2,
+  const li = leg === st.legs[0] ? 0 : 1;
+  const out = st.shift[li * 2], front = st.shift[li * 2 + 1];
+  if (out || front) {
+    to.addScaledVector(st.side, li === 0 ? out : -out).addScaledVector(
+      st.fwd,
+      front,
     );
   }
   const dist = to.length();
@@ -321,6 +375,8 @@ function solveLeg(hips, st, leg) {
   leg.lower.quaternion.copy(_hq2.copy(Qu2).invert()).multiply(Ql2);
   // 足: 世界での向きは、基準のときのまま
   leg.foot.quaternion.copy(_hq2.copy(Ql2).invert()).multiply(leg.footQ);
+  // 深くしゃがむと、足を水平に保つには、足首を可動域より曲げることになる。可動域で止める(かかとが浮く)
+  clampToLimit(leg.foot, leg.footName);
 }
 function syncHipBend(hips) {
   const st = hipBendState.get(hips);
@@ -335,7 +391,7 @@ function syncHipBend(hips) {
     leg.lower.quaternion.copy(leg.qL);
     leg.foot.quaternion.copy(leg.qF);
   }
-  if (st.t.lengthSq() > 1e-10 || st.spread > 0) {
+  if (st.t.lengthSq() > 1e-10 || st.shift.some((v) => v !== 0)) {
     hips.position.add(st.t);
     for (const leg of st.legs) if (!leg.free) solveLeg(hips, st, leg); // 足を動かす脚は、鎖の関節で決める
   }
@@ -347,7 +403,7 @@ function hipOffset(vrm) {
   const st = hipBendState.get(hips);
   if (!st) return null;
   const t = st.t.clone();
-  t.spread = st.spread;
+  t.shift = st.shift.slice();
   return t;
 }
 /** 解の途中で hips の回転(と平行移動 t)を戻したあと、脚と位置を合わせ直す */
@@ -357,7 +413,7 @@ function settleHipBend(vrm, t = null) {
   if (!st) return;
   if (t) {
     st.t.copy(t);
-    st.spread = t.spread ?? 0;
+    st.shift = t.shift ? t.shift.slice() : [0, 0, 0, 0];
   }
   syncHipBend(hips);
   hips.updateMatrixWorld(true);
@@ -382,6 +438,28 @@ export const HAND_PARTS = {
   back: { at: 0.5, radius: 0.5, normal: BACK_NORMAL },
   // 指先(の腹)で触れる。接触は指ごとの頂点で決めるので、at・radius・normal は手の基準点と向きだけに使う
   fingers: { at: 0.6, radius: 0.25, normal: PALM_NORMAL },
+  // 手以外の部位。node: 接触点がついているボーン、child: その次のボーン(骨の向きと長さを決める)、
+  // t: 骨の長さに対する、触れる範囲(node の原点側が 0)、normal: 部位が向く方向(ボーンのローカル座標。VRM0 は前後が逆)、
+  // noAutoRoll: 面の上での回転(部位の骨の向き)は、自分で回すまで決めない(自動では選ばない)、skip: 体の当たり判定から外す点(samples の番号。触れる部位自身)、
+  // reach: 肩から接触点までの届く長さ(上腕・前腕の長さに対する割合)
+  elbow: {
+    node: "LowerArm",
+    child: "Hand",
+    t: [-0.1, 0.25],
+    normal: new THREE.Vector3(0, 0, -1),
+    noAutoRoll: true,
+    skip: [1, 2],
+    reach: [1, 0],
+  },
+  forearm: {
+    node: "LowerArm",
+    child: "Hand",
+    t: [0.2, 0.9],
+    normal: PALM_NORMAL,
+    noAutoRoll: true,
+    skip: [2, 3, 4],
+    reach: [1, 0.55],
+  },
 };
 
 /**
@@ -392,7 +470,30 @@ export const FOOT_PARTS = {
   sole: { tilt: 0 },
   heel: { tilt: 0.5 },
   toe: { tilt: -0.7 },
+  // 脚の途中で触れる部位(HAND_PARTS の肘・前腕と同じ書き方)。膝・すねは、面に向かう側が正面
+  knee: {
+    node: "LowerLeg",
+    child: "Foot",
+    t: [-0.05, 0.2],
+    normal: new THREE.Vector3(0, 0, 1),
+    noAutoRoll: true,
+    skip: [1, 2],
+  },
+  shin: {
+    node: "LowerLeg",
+    child: "Foot",
+    t: [0.25, 0.85],
+    normal: new THREE.Vector3(0, 0, 1),
+    noAutoRoll: true,
+    skip: [2, 3, 4],
+  },
 };
+
+/** 脚・腕の途中(膝・すね・肘・前腕)で触れる部位の定義。手のひら・足裏などなら null */
+function limbPart(chainName, part) {
+  const table = IK_CHAINS[chainName]?.foot ? FOOT_PARTS : HAND_PARTS;
+  return table[part]?.node ? table[part] : null;
+}
 const FOOT_BAND = 0.01; // 足裏とみなす、いちばん低い点からの厚み(m)
 const FOOT_POINTS_MAX = 1500;
 const _footCache = new WeakMap();
@@ -610,12 +711,17 @@ const HAND_SUPPORT_MAX = 160;
  */
 export function collectHandPoints(vrm, chainName, part = "center") {
   const spec = IK_CHAINS[chainName];
-  if (!spec?.palm) return null;
-  const end = vrm.humanoid.getNormalizedBoneNode(spec.end);
+  const limb = limbPart(chainName, part);
+  if (!spec || (!spec.palm && !limb)) return null;
+  const end = vrm.humanoid.getNormalizedBoneNode(
+    limb ? `${spec.side}${limb.node}` : spec.end,
+  );
   if (!end) return null;
   const bones = new Set(
-    HAND_SUPPORT_BONES.map((n) =>
-      vrm.humanoid.getRawBoneNode(`${spec.side}${n}`)
+    (limb ? [limb.node] : HAND_SUPPORT_BONES).map((n) =>
+      vrm.humanoid.getRawBoneNode(
+        limb ? `${spec.side}${n}` : `${spec.side}${n}`,
+      )
     ).filter(Boolean),
   );
   // メッシュの頂点は生ボーンの姿勢で決まる。生ボーンは vrm.update で正規化ボーンに追いつくので、1 フレーム遅れていることがある。
@@ -647,10 +753,34 @@ export function collectHandPoints(vrm, chainName, part = "center") {
   });
   if (!pts.length) return null;
   // 触れる部位のまわり(手首から中指の付け根へ向かう線上の点を中心に、手の大きさに比例した半径)の頂点だけに絞る
-  const def = HAND_PARTS[part] ?? HAND_PARTS.center;
-  const n = def.normal;
-  const finger = vrm.humanoid.getNormalizedBoneNode(spec.palm.child)?.position;
+  const def = limb ?? HAND_PARTS[part] ?? HAND_PARTS.center;
+  const n = limb
+    ? def.normal.clone().setZ(
+      def.normal.z * (vrm.meta?.metaVersion === "0" ? -1 : 1),
+    )
+    : def.normal;
   let region = pts;
+  if (limb) {
+    // 骨の向きに沿った範囲(t)の頂点だけを使う
+    const axis = vrm.humanoid.getNormalizedBoneNode(`${spec.side}${limb.child}`)
+      ?.position;
+    if (axis) {
+      const len = axis.length();
+      const inRegion = [];
+      for (let i = 0; i < pts.length; i += 3) {
+        const t =
+          (pts[i] * axis.x + pts[i + 1] * axis.y + pts[i + 2] * axis.z) /
+          (len * len);
+        if (t >= limb.t[0] && t <= limb.t[1]) {
+          inRegion.push(pts[i], pts[i + 1], pts[i + 2]);
+        }
+      }
+      if (inRegion.length) region = inRegion;
+    }
+  }
+  const finger = limb
+    ? null
+    : vrm.humanoid.getNormalizedBoneNode(spec.palm.child)?.position;
   if (finger) {
     const len = finger.length();
     const ax = finger.x * def.at,
@@ -764,10 +894,12 @@ function isOwnPart(name, side, foot = false) {
 /** 1 つの鎖の、先端(手のひら)まわりの情報を用意する */
 function prepareEnd(vrm, chainName, end, handPoints, part = "center") {
   const spec = IK_CHAINS[chainName];
+  const limb = limbPart(chainName, part);
+  let pointNode = end; // 接触点がついているボーン(手・足以外の部位のときは、その骨)
   const palmLocal = new THREE.Vector3();
   const fingerLocal = new THREE.Vector3(1, 0, 0);
   const normalLocal = (HAND_PARTS[part] ?? HAND_PARTS.center).normal.clone();
-  if (spec.foot) {
+  if (spec.foot && !limb) {
     // 足: 先端は部位の接触点、向きは足裏の向き(下)と、つま先の向き
     const geo = footGeometry(vrm, spec.side);
     if (geo) {
@@ -776,7 +908,22 @@ function prepareEnd(vrm, chainName, end, handPoints, part = "center") {
     }
     normalLocal.set(0, -1, 0);
   }
-  if (spec.palm) {
+  if (limb) {
+    // 腕の途中(肘・前腕)で触れる: 接触点は、骨の上の点。メッシュの接触は handPoints で合わせる
+    const node = vrm.humanoid.getNormalizedBoneNode(`${spec.side}${limb.node}`);
+    const child = vrm.humanoid.getNormalizedBoneNode(
+      `${spec.side}${limb.child}`,
+    );
+    if (node && child) {
+      pointNode = node;
+      palmLocal.copy(child.position).multiplyScalar(
+        (limb.t[0] + limb.t[1]) / 2,
+      );
+      normalLocal.copy(limb.normal);
+      normalLocal.z *= vrm.meta?.metaVersion === "0" ? -1 : 1;
+      fingerLocal.copy(child.position).normalize();
+    }
+  } else if (spec.palm) {
     const child = vrm.humanoid.getNormalizedBoneNode(spec.palm.child);
     if (child) {
       palmLocal.copy(child.position).multiplyScalar(
@@ -857,6 +1004,8 @@ function prepareEnd(vrm, chainName, end, handPoints, part = "center") {
     hasPalm: !!spec.palm || !!spec.foot,
     foot: !!spec.foot,
     samples,
+    pointNode,
+    skip: new Set(limb?.skip ?? []), // 触れる部位自身の点は、体の当たり判定から外す
     limbCount: spec.foot ? 5 : 4, // 置いた物を避ける点の数(先頭から。手首から先と足は、面に触れるので除く)
     samplePos: new Float64Array(samples.length * 3),
     handPoints,
@@ -922,25 +1071,35 @@ function prepare(vrm, goals, bodySurface = null) {
           }
           params.push({ joint, k, w, lo: low, hi: hi * st.len });
         });
-        // 足を広げる量。置いていない足がある(両足が動かせる)ときだけ、必要なら使う
-        const sj = {
-          node,
-          order: "XYZ",
-          e: [st.spread],
-          trunk: true,
-          hip: true,
-          move: true,
-          spread: true,
-          state: st,
-        };
-        if (!spec.foot) joints.push(sj);
-        if (!spec.foot) {
-          params.push({
-            joint: sj,
-            k: 0,
-            w: SPREAD_WEIGHT,
-            lo: 0,
-            hi: SPREAD_MAX * st.len,
+        // 置いていない足を、前後・外側へ動かす量。足を置く(足裏・かかと・つま先)ときは使わない(置いた足が立ち位置を決める)。
+        // 手や、膝・すねなどで触れるときは、届かない・体にめり込むときだけ、必要なぶん使う
+        if ((!spec.foot || limbPart(goal.chain, goal.part))) {
+          [0, 1].forEach((li) => {
+            const sj = {
+              node,
+              order: "XYZ",
+              e: [st.shift[li * 2], st.shift[li * 2 + 1]],
+              trunk: true,
+              hip: true,
+              move: true,
+              shift: li,
+              state: st,
+            };
+            joints.push(sj);
+            params.push({
+              joint: sj,
+              k: 0,
+              w: SHIFT_WEIGHT,
+              lo: 0,
+              hi: SHIFT_OUT * st.len,
+            });
+            params.push({
+              joint: sj,
+              k: 1,
+              w: SHIFT_WEIGHT,
+              lo: -SHIFT_BACK * st.len,
+              hi: SHIFT_FRONT * st.len,
+            });
           });
         }
         continue;
@@ -1102,8 +1261,10 @@ function lowestPoint(f, cn) {
 function forward(ctx) {
   for (const j of ctx.joints) {
     if (j.move) {
-      if (j.spread) j.state.spread = j.e[0];
-      else j.state.t.set(j.e[0], j.e[1], j.e[2]); // 腰の平行移動は、続く hips の回転のところで、まとめて反映する
+      if (j.shift !== undefined) {
+        j.state.shift[j.shift * 2] = j.e[0];
+        j.state.shift[j.shift * 2 + 1] = j.e[1];
+      } else j.state.t.set(j.e[0], j.e[1], j.e[2]); // 腰の平行移動は、続く hips の回転のところで、まとめて反映する
       continue;
     }
     j.node.quaternion.setFromEuler(
@@ -1114,14 +1275,14 @@ function forward(ctx) {
   }
   for (const node of ctx.refresh) node.updateMatrixWorld(false);
   for (const c of ctx.chains) {
-    c.P.copy(c.palmLocal).applyMatrix4(c.end.matrixWorld);
-    c.N.copy(c.normalLocal).transformDirection(c.end.matrixWorld);
-    c.F.copy(c.fingerLocal).transformDirection(c.end.matrixWorld);
+    c.P.copy(c.palmLocal).applyMatrix4(c.pointNode.matrixWorld);
+    c.N.copy(c.normalLocal).transformDirection(c.pointNode.matrixWorld);
+    c.F.copy(c.fingerLocal).transformDirection(c.pointNode.matrixWorld);
     c.excess = 0;
     if (c.contactNormal && c.handPoints) {
       // 手のメッシュのうち、面にいちばん近い(法線の逆向きに、いちばん深い)頂点まで、先端の点をずらす。
       // そうすると、先端の点を面に合わせれば、手のひらの実際の表面が面に触れる
-      const w = c.end.matrixWorld.elements;
+      const w = c.pointNode.matrixWorld.elements;
       const pts = c.handPoints;
       const cn = c.contactNormal;
       let m = Infinity;
@@ -1209,9 +1370,9 @@ export function getEndPoint(vrm, chainName, part = "center") {
   if (!ctx) return null;
   vrm.scene.updateMatrixWorld(true);
   const c = ctx.chains[0];
-  c.P.copy(c.palmLocal).applyMatrix4(c.end.matrixWorld);
-  c.N.copy(c.normalLocal).transformDirection(c.end.matrixWorld);
-  c.F.copy(c.fingerLocal).transformDirection(c.end.matrixWorld);
+  c.P.copy(c.palmLocal).applyMatrix4(c.pointNode.matrixWorld);
+  c.N.copy(c.normalLocal).transformDirection(c.pointNode.matrixWorld);
+  c.F.copy(c.fingerLocal).transformDirection(c.pointNode.matrixWorld);
   return {
     position: c.P.clone(),
     palmNormal: c.N.clone(),
@@ -1288,10 +1449,32 @@ function findPenetrations(ctx, bodySurface, out) {
       }
     });
   });
+  // 床の下へ、腕や脚が潜り込まないようにする(膝・すねを床に付けるとき、足が床を突き抜けて姿勢が定まらなくなるのを防ぐ)
+  if (bodySurface?.floorY !== undefined) {
+    const floorY = bodySurface.floorY;
+    ctx.chains.forEach((c, ci) => {
+      for (let k = 0; k < c.samples.length; k++) {
+        if (c.skip?.has(k)) continue; // 触れさせる部位は、床に付けたい
+        const depth = floorY - (c.samplePos[k * 3 + 1] - c.samples[k].r * 0.5);
+        if (depth > 0) {
+          // あとで COLLISION_MARGIN が足されるので、引いておく(床は、余白なしで押し返す)
+          out.push({
+            ci,
+            k,
+            depth: depth - COLLISION_MARGIN,
+            dx: 0,
+            dy: 1,
+            dz: 0,
+          });
+        }
+      }
+    });
+  }
   // 置いた物(球で敷き詰めた表面)の中を、腕や脚が通り抜けないようにする
   if (bodySurface?.grids?.length) {
     ctx.chains.forEach((c, ci) => {
       for (let k = 0; k < Math.min(c.limbCount ?? 0, c.samples.length); k++) {
+        if (c.skip?.has(k)) continue;
         const x = c.samplePos[k * 3],
           y = c.samplePos[k * 3 + 1],
           z = c.samplePos[k * 3 + 2];
@@ -1320,6 +1503,7 @@ function findPenetrations(ctx, bodySurface, out) {
   );
   ctx.chains.forEach((c, ci) => {
     for (let k = 0; k < c.samples.length; k++) {
+      if (c.skip?.has(k)) continue;
       _v1.set(
         c.samplePos[k * 3],
         c.samplePos[k * 3 + 1],
@@ -1669,7 +1853,7 @@ function solveCore(vrm, goals, bodySurface) {
       const saved = ctx.joints.map((j) => j.e.slice());
       const bent = bendParams.some((p) => p.joint.e[p.k] > HIP_BENT_MIN);
       const squatting = moveParams.some((p) =>
-        Math.abs(p.joint.e[p.k]) > HIP_MOVE_MIN
+        p.joint.shift === undefined && Math.abs(p.joint.e[p.k]) > HIP_MOVE_MIN
       );
       const rest = (ps) =>
         ps.forEach((p) => {
@@ -1681,7 +1865,8 @@ function solveCore(vrm, goals, bodySurface) {
       // (接触のように、元々 2 mm より大きく残る目標でも、戻せなくなって曲げっぱなしになるのを防ぐ)
       forward(ctx);
       const curErr = Math.max(...evaluate().per.map((p) => p.posErr));
-      const release = HIP_RELEASE_ERROR + curErr;
+      // (目標を大きく動かした直後は、今の姿勢の誤差が大きいだけなので、上限を設ける。上限がないと、腰を下げたまま戻れなくなる)
+      const release = HIP_RELEASE_ERROR + Math.min(curErr, HIP_RELEASE_CAP);
       const back = () => {
         ctx.joints.forEach((j, i) => j.e.splice(0, 3, ...saved[i]));
         hipParams.forEach((p, i) => (p.w = hipW[i]));
@@ -1702,7 +1887,10 @@ function solveCore(vrm, goals, bodySurface) {
             const mp = moveParams[0];
             // 今の姿勢より良くならなければ、今の姿勢のまま(届かないときに、毎回違う姿勢へ飛んでぷるぷるするのを防ぐ)
             let bestRun = prev;
-            for (const f of FOOT_SQUAT_STARTS) {
+            const starts = goals.some((g) => limbPart(g.chain, g.part))
+              ? LIMB_SQUAT_STARTS
+              : FOOT_SQUAT_STARTS;
+            for (const f of starts) {
               ctx.joints.forEach((j, i) => j.e.splice(0, 3, ...start[i]));
               mp.joint.e[mp.k] = Math.max(mp.lo, -f * mp.joint.state.len);
               const r = run();
@@ -2012,7 +2200,17 @@ export class IkManager {
     return f.normalize();
   }
 
-  /** 指の向き(基準を、法線まわりにロールの角度だけ回したもの) */
+  /** 肘・前腕・膝・すねの向き(骨の向き)の基準(ロール 0°)。今の骨の向きを面の上に落としたもの */
+  _limbBase(vrm, chain, e) {
+    const cur = getEndPoint(vrm, chain, e.part)?.fingerDir;
+    if (cur) {
+      const f = cur.clone().addScaledVector(e.normal, -cur.dot(e.normal));
+      if (f.lengthSq() > 0.09) return f.normalize();
+    }
+    return this._canonicalBase(vrm, e.normal);
+  }
+
+  /** 指(肘・膝などは骨)の向き(基準を、法線まわりにロールの角度だけ回したもの) */
   _fingerDir(e) {
     if (!e.normal || !e.fingerBase) return null;
     return e.fingerBase.clone().applyAxisAngle(e.normal, e.roll);
@@ -2022,7 +2220,9 @@ export class IkManager {
   setRoll(vrm, chain, roll) {
     const e = this._chains(vrm)?.[chain];
     if (!e?.normal) return;
-    e.fingerBase ??= this._canonicalBase(vrm, e.normal);
+    e.fingerBase ??= limbPart(chain, e.part)
+      ? this._limbBase(vrm, chain, e)
+      : this._canonicalBase(vrm, e.normal);
     e.manualRoll = true; // 自分で回したら、自動の推定はもうしない
     e.roll = roll;
     if (e.grip) e.grip.dirty = true; // 手の向きが変わるので、握りの接触は調べ直す
@@ -2056,7 +2256,7 @@ export class IkManager {
         this.moveTarget(vrm, chain, pending.position, pending.normal);
       }
     }
-    if (IK_CHAINS[chain].foot) {
+    if (IK_CHAINS[chain].foot && !limbPart(chain, e.part)) {
       // 足: 接触の頂点や握りは使わない。向きは、今の足の向きから始める(回転のスライダーで変える)
       if (e.normal && !e.fingerBase) {
         e.fingerBase = this._footBase(vrm, chain, e);
@@ -2100,7 +2300,10 @@ export class IkManager {
     let bestName = null;
     let bestDist = 0;
     for (const { name, node, offset, shape, other } of bodySurface) {
-      if (!node || !offset || !name || (!other && isOwnPart(name, side))) {
+      if (
+        !node || !offset || !name ||
+        (!other && isOwnPart(name, side, IK_CHAINS[chain].foot))
+      ) {
         continue;
       }
       if (other) node.updateWorldMatrix(true, false); // 他のモデルの今の姿勢で判定する
@@ -2127,6 +2330,14 @@ export class IkManager {
       n0: e.normal?.clone() ?? null,
       b0: e.fingerBase?.clone() ?? null,
     };
+  }
+
+  /** 肩から、触れる部位までの届く長さ(手なら腕の長さ、肘なら上腕の長さ) */
+  _armReach(pos, arm, part) {
+    const upper = pos(arm[0]).distanceTo(pos(arm[1]));
+    const lower = pos(arm[1]).distanceTo(pos(arm[2]));
+    const r = HAND_PARTS[part]?.reach ?? [1, 1];
+    return upper * r[0] + lower * r[1];
   }
 
   /** 目標点を、つけた体の部位の動きに合わせて動かす */
@@ -2217,6 +2428,7 @@ export class IkManager {
   autoRoll(vrm, chain) {
     const e = this._chains(vrm)?.[chain];
     if (!e?.normal) return;
+    if (limbPart(chain, e.part)?.noAutoRoll) return; // 肘など、面の上での回転は自分で回すまで決めない
     const bodySurface = this._surfaces(vrm) ?? null;
     // 他の手も有効なら、体幹を共有するので一緒に解く(他の手の目標は、今のロールのまま)
     const others = Object.entries(this._chains(vrm)).filter(([c, o]) =>
@@ -2315,6 +2527,16 @@ export class IkManager {
 
   /** 解くための目標(solveChains の goals の 1 つ)を作る */
   _goal(chain, e) {
+    if (IK_CHAINS[chain].foot && limbPart(chain, e.part)) {
+      // 膝・すね: 手と同じく、メッシュの接触点と法線で合わせる
+      return {
+        chain,
+        part: e.part,
+        handPoints: e.handPoints,
+        lockTrunk: false,
+        target: this._target(e, this._fingerDir(e)),
+      };
+    }
     if (IK_CHAINS[chain].foot) {
       return {
         chain,
@@ -2954,6 +3176,11 @@ export class IkManager {
    */
   _surfaces(vrm) {
     const s = this._surfacesRaw(vrm);
+    if (s) {
+      s.floorY = this._lying(vrm)
+        ? vrm.scene.userData.ikFloorY
+        : vrm.scene.position.y; // 床(物の上に立つときは、その高さ。体を横たえているときは、横たえる前の高さ)
+    }
     if (s) s.grids = this._frameGrids ?? null; // 置いた物の球(solveCore が、腕や脚の通り抜けを防ぐのに使う)
     return s;
   }
@@ -2988,7 +3215,12 @@ export class IkManager {
     const e = this._chains(vrm)?.[chain];
     if (IK_CHAINS[chain].foot) {
       if (!e || !FOOT_PARTS[part] || e.part === part) return;
+      const limbChange = limbPart(chain, e.part) || limbPart(chain, part);
       e.part = part;
+      if (limbChange) {
+        e.handPoints = null;
+        this.endFollow(vrm, chain); // 膝・すねは、メッシュの接触点を取り直す
+      }
       this._callbacks.onChange?.();
       return;
     }
@@ -3242,15 +3474,23 @@ export class IkManager {
     // 足が指定されていれば、先にその場所へ足を置く。以降の腰の移動(しゃがみ)も、その足の位置を保つ
     const feet = enabled.filter(([chain]) => IK_CHAINS[chain].foot);
     if (feet.length) {
+      // 膝・すねで触れる脚は、体についた目標に追従し、接触の点が要る。足を置く(足裏・かかと・つま先)のとは別に扱う
+      for (const [chain, e] of feet) {
+        if (!limbPart(chain, e.part)) continue;
+        this._followAnchor(e);
+        this._ensurePoints(vrm, chain, e);
+      }
       const goals = feet.map(([chain, e]) => this._goal(chain, e));
+      const placed = feet.filter(([chain, e]) => !limbPart(chain, e.part));
       // 両足を置くなら、低いほうの足の高さに、モデルを持ち上げる(物の上に立つ)
-      if (canMove && feet.length >= 2) this._liftToFeet(vrm, feet);
+      if (canMove && placed.length >= 2) this._liftToFeet(vrm, placed);
       // 届かない足は、先に届く位置へ動く(届かないまま解くと、姿勢が定まらずにぷるぷるする)
-      if (canMove && this._moveToFoot(vrm, feet)) {
+      if (canMove && placed.length && this._moveToFoot(vrm, placed)) {
         vrm.scene.updateMatrixWorld(true);
       }
-      solveChains(vrm, goals, this._surfaces(vrm) ?? null);
+      const results = solveChains(vrm, goals, this._surfaces(vrm) ?? null);
       vrm.scene.updateMatrixWorld(true);
+      if (results) this._retryLegs(vrm, feet, goals, results);
     }
     const active = enabled.filter(([chain]) => !IK_CHAINS[chain].foot);
     if (!active.length) return false;
@@ -3263,10 +3503,34 @@ export class IkManager {
     });
     let results = solveChains(vrm, goals, bodySurface);
     if (!results) return false;
+    // 両手(両肘など)が、肩から腕を伸ばしても届かないほど低く、今の姿勢でも届いていなければ、歩いて近づく前に、体を横たえてみる
+    // (片手だけなら、しゃがむ・かがむ・歩くで届くので、それらで届かなかったときの最後の手段にする)
+    if (
+      canMove && !feet.length && !this._lying(vrm) &&
+      this._isUnreached(active, results) && this._lowCount(vrm, active) >= 2
+    ) {
+      results = this._lieDown(vrm, active, goals, results) ?? results;
+    }
+    // 体を横たえているとき、今の姿勢で届かなくなれば、立ち姿に戻して解き直す(そのあと、必要ならまた横たえる)
+    const lie = vrm.scene.userData;
+    if (this._lying(vrm)) {
+      // 横たえた直後は、まだ収束の途中なので、しばらく届かなくても待つ
+      lie.ikLieBad = this._isUnreached(active, results)
+        ? (lie.ikLieBad || 0) + 1
+        : 0;
+    }
+    if (
+      this._lying(vrm) && canMove && !feet.length && lie.ikLieBad > LIE_PATIENCE
+    ) {
+      this._standUp(vrm, active);
+      for (const [, e] of active) this._followAnchor(e);
+      results = solveChains(vrm, goals, this._surfaces(vrm) ?? null) ?? results;
+    }
     // 届かない目標があれば、確実に届く立ち位置へ移動してから(1 回で)解き直す。それでも届かなければ、さらに近づく
     for (
       let attempt = 0;
-      canMove && !feet.length && attempt < STAND_RATIOS.length;
+      canMove && !feet.length && !this._lying(vrm) &&
+      attempt < STAND_RATIOS.length;
       // 足を指定したら、その場から動かない
       attempt++
     ) {
@@ -3277,9 +3541,19 @@ export class IkManager {
       for (const [, e] of active) this._followAnchor(e);
       results = solveChains(vrm, goals, bodySurface) ?? results;
     }
+    // 立ったままでは(しゃがむ・かがむ・歩くでも)届かない状態が続くなら、最後の手段として体を横たえて届かせる
+    if (canMove && !feet.length && !this._lying(vrm)) {
+      const u = vrm.scene.userData;
+      u.ikUnreached = this._isUnreached(active, results)
+        ? (u.ikUnreached || 0) + 1
+        : 0;
+      if (u.ikUnreached >= LIE_AFTER) {
+        results = this._lieDown(vrm, active, goals, results) ?? results;
+      }
+    }
     // 届いていても、体を突き抜けているなら、突き抜けない立ち位置を探す
     if (
-      canMove && !feet.length &&
+      canMove && !feet.length && !this._lying(vrm) &&
       this._moveToClear(vrm, active, goals, bodySurface, results, enabled)
     ) {
       vrm.scene.updateMatrixWorld(true);
@@ -3312,6 +3586,72 @@ export class IkManager {
       (results[i].posErr > RETRY_ERROR || results[i].depth > STUCK_DEPTH) &&
       e.retryKey !== this._targetKey(e)
     );
+  }
+
+  /**
+   * 膝・すねで触れる脚が、深くしゃがんだ姿勢などの局所解にはまって、位置や向きが合わないままのとき、
+   * 脚と腰を初期姿勢に戻して解き直す(同じ目標では 1 回だけ。明らかに良くなったときだけ採用)
+   */
+  _retryLegs(vrm, feet, goals, results) {
+    const bad = feet.some(([chain, e], i) => {
+      if (!limbPart(chain, e.part) || e.retryKey === this._targetKey(e)) {
+        return false;
+      }
+      const r = results[i];
+      const rot = (r.cost - r.posErr - r.depth) / ROT_WEIGHT;
+      return r.posErr > RETRY_ERROR || rot > LIMB_ROT_RETRY;
+    });
+    if (!bad) return;
+    for (const [chain, e] of feet) {
+      if (limbPart(chain, e.part)) e.retryKey = this._targetKey(e);
+    }
+    const hm = vrm.humanoid;
+    const hips = hm.getNormalizedBoneNode("hips");
+    const all = Object.keys(hm.humanBones)
+      .map((name) => hm.getNormalizedBoneNode(name))
+      .filter(Boolean);
+    const saved = all.map((n) => [n.quaternion.clone(), n.position.clone()]);
+    const oldState = hipBendState.get(hips);
+    // 戻すのは、腰と脚(の関節)だけ。腕などは、今の姿勢のまま
+    const reset = new Set([
+      hips,
+      ...feet.flatMap(([chain]) =>
+        IK_CHAINS[chain].joints.map((j) => hm.getNormalizedBoneNode(j.bone))
+      ),
+    ]);
+    const surfaces = this._surfaces(vrm) ?? null;
+    const sum = (rs) => rs.reduce((a, r) => a + r.cost, 0);
+    const before = sum(results);
+    // 目標を持たない足(支えの足)は、動かさない
+    const supports = ["leftFoot", "rightFoot"]
+      .filter((n) => !feet.some(([chain]) => chain === n))
+      .map((n) => hm.getNormalizedBoneNode(n))
+      .filter(Boolean);
+    const supportAt = supports.map((n) =>
+      n.getWorldPosition(new THREE.Vector3())
+    );
+    hm.resetNormalizedPose();
+    all.forEach((n, i) => {
+      if (reset.has(n)) return;
+      n.quaternion.copy(saved[i][0]);
+      n.position.copy(saved[i][1]);
+    });
+    vrm.scene.updateMatrixWorld(true);
+    let next = null;
+    for (let pass = 0; pass < 4; pass++) {
+      next = solveChains(vrm, goals, surfaces);
+    }
+    const moved = supports.some((n, i) =>
+      n.getWorldPosition(_hv1).distanceTo(supportAt[i]) > RETRY_SUPPORT_MOVE
+    );
+    if (!next || moved || sum(next) > before * 0.8) {
+      all.forEach((n, i) => {
+        n.quaternion.copy(saved[i][0]);
+        n.position.copy(saved[i][1]);
+      });
+      if (oldState) hipBendState.set(hips, oldState);
+    }
+    vrm.scene.updateMatrixWorld(true);
   }
 
   _targetKey(e) {
@@ -3576,8 +3916,7 @@ export class IkManager {
     );
     if (!hips || !left || !right || arm.some((n) => !n)) return false;
     const pos = (n) => n.getWorldPosition(new THREE.Vector3());
-    const armLength = pos(arm[0]).distanceTo(pos(arm[1])) +
-      pos(arm[1]).distanceTo(pos(arm[2]));
+    const armLength = this._armReach(pos, arm, e.part);
     const aim = this._aim(vrm, active, e);
     const toTarget = aim.clone().sub(pos(hips));
     toTarget.y = 0;
@@ -3596,6 +3935,254 @@ export class IkManager {
       here,
     );
     return this._standAt(vrm, spot, aim);
+  }
+
+  /** 体を横たえた姿勢にしているか(横たえたあとに、モデルの向きを手で変えられていたら、横たえていないものとして扱う) */
+  _lying(vrm) {
+    const u = vrm.scene.userData;
+    if (!u.ikPosture) return false;
+    if (u.ikLieQ && u.ikLieQ.angleTo(vrm.scene.quaternion) < 1e-3) return true;
+    delete u.ikPosture;
+    delete u.ikFloorY;
+    return false;
+  }
+
+  /** 自分の体についていない目標のうち、届いていないものがあるか */
+  _isUnreached(active, results) {
+    return active.some(([chain, e], i) => {
+      if (!chain.endsWith("Hand") || e.anchor) return false;
+      return results[i].posErr > RETRY_ERROR;
+    });
+  }
+
+  /** 肩から腕を伸ばしても届かないほど低い、手の目標の数 */
+  _lowCount(vrm, active) {
+    const hm = vrm.humanoid;
+    return active.filter(([chain, e]) => {
+      if (!chain.endsWith("Hand") || e.anchor) return false;
+      const side = IK_CHAINS[chain].side;
+      const arm = ["UpperArm", "LowerArm", "Hand"].map((n) =>
+        hm.getNormalizedBoneNode(`${side}${n}`)
+      );
+      if (arm.some((n) => !n)) return false;
+      const pos = (n) => n.getWorldPosition(new THREE.Vector3());
+      return pos(arm[0]).y - e.target.y > this._armReach(pos, arm, e.part);
+    }).length;
+  }
+
+  /** 体の向きを表す回転行列(列: 左右・頭・正面)。頭は腰から頭、正面は(左脚 − 右脚)× 頭の向き */
+  _bodyFrame(vrm) {
+    const hm = vrm.humanoid;
+    const pos = (n) =>
+      hm.getNormalizedBoneNode(n).getWorldPosition(new THREE.Vector3());
+    const up = pos("head").sub(pos("hips")).normalize();
+    const front = pos("leftUpperLeg").sub(pos("rightUpperLeg")).cross(up);
+    front.addScaledVector(up, -front.dot(up)).normalize();
+    const lat = up.clone().cross(front);
+    return new THREE.Matrix4().makeBasis(lat, up, front);
+  }
+
+  /** 腰・体幹・脚と、目標のある腕の関節を、初期姿勢に戻す(ほかのボーンは今のまま) */
+  _resetBody(vrm, active) {
+    const hm = vrm.humanoid;
+    const all = Object.keys(hm.humanBones)
+      .map((name) => [name, hm.getNormalizedBoneNode(name)])
+      .filter(([, n]) => n);
+    const reset = new Set([
+      ...LIE_BONES,
+      ...active.flatMap(([chain]) =>
+        IK_CHAINS[chain].joints.map((j) => j.bone)
+      ),
+    ]);
+    const saved = all.map((
+      [, n],
+    ) => [n.quaternion.clone(), n.position.clone()]);
+    hm.resetNormalizedPose();
+    all.forEach(([name, n], i) => {
+      if (reset.has(name)) return;
+      n.quaternion.copy(saved[i][0]);
+      n.position.copy(saved[i][1]);
+    });
+  }
+
+  /** 体の今の姿勢(ボーンと、モデルの位置・向き)を覚える / 戻す */
+  _snapshot(vrm) {
+    const hm = vrm.humanoid;
+    const nodes = Object.keys(hm.humanBones)
+      .map((name) => hm.getNormalizedBoneNode(name))
+      .filter(Boolean);
+    return {
+      nodes,
+      bones: nodes.map((n) => [n.quaternion.clone(), n.position.clone()]),
+      q: vrm.scene.quaternion.clone(),
+      p: vrm.scene.position.clone(),
+    };
+  }
+
+  _restoreSnapshot(vrm, snap) {
+    snap.nodes.forEach((n, i) => {
+      n.quaternion.copy(snap.bones[i][0]);
+      n.position.copy(snap.bones[i][1]);
+    });
+    vrm.scene.quaternion.copy(snap.q);
+    vrm.scene.position.copy(snap.p);
+    vrm.scene.updateMatrixWorld(true);
+  }
+
+  /**
+   * 立ったままでは届かないとき、体を横たえて(うつ伏せ・仰向け・横向き)届かせる。
+   * 頭の向き(水平 8 方向)と腹の向き(下・上・左右)の候補を、肩から目標までの距離だけで絞り込み、
+   * 残った少数だけを実際に解いて、いちばん良いものを採る。良くならなければ、元の姿勢に戻す。
+   * 体はいちばん低い点が床に付く高さに置く。
+   * @returns {object[]|null} 横たえて解いた結果。横たえなかったら null
+   */
+  _lieDown(vrm, active, goals, before) {
+    const u = vrm.scene.userData;
+    const key = active.map(([, e]) => this._targetKey(e)).join("|");
+    if (u.ikLieKey === key) return null; // 同じ目標では、1 回だけ(重いので)
+    u.ikLieKey = key;
+    const lowestY = this._callbacks.getLowestY;
+    if (!lowestY) return null;
+    const hm = vrm.humanoid;
+    const pos = (n) => n.getWorldPosition(new THREE.Vector3());
+    const hips = hm.getNormalizedBoneNode("hips");
+    if (!hips) return null;
+    // 体に付いていない手の目標だけで考える
+    const hands = active
+      .map(([chain, e], i) => ({ chain, e, i }))
+      .filter(({ chain, e }) => chain.endsWith("Hand") && !e.anchor);
+    if (!hands.length) return null;
+    const upper = hands.map(({ chain }) =>
+      hm.getNormalizedBoneNode(`${IK_CHAINS[chain].side}UpperArm`)
+    );
+    if (upper.some((n) => !n)) return null;
+    const base = this._snapshot(vrm);
+    const floor0 = (u.ikFloorY ?? base.p.y) - (u.groundLift || 0);
+    const aim = hands.reduce((a, { e }) => a.add(e.target), new THREE.Vector3())
+      .multiplyScalar(1 / hands.length);
+    const toAim = aim.clone().sub(pos(hips));
+    toAim.y = 0;
+    if (toAim.lengthSq() < 1e-6) toAim.set(0, 0, 1);
+    toAim.normalize();
+    const reaches = hands.map(({ chain, e }) => {
+      const arm = ["UpperArm", "LowerArm", "Hand"].map((n) =>
+        hm.getNormalizedBoneNode(`${IK_CHAINS[chain].side}${n}`)
+      );
+      return this._armReach(pos, arm, e.part);
+    });
+    const meanReach = reaches.reduce((a, b) => a + b, 0) / reaches.length;
+    const up = new THREE.Vector3(0, 1, 0);
+    /** 候補の向きに体を置く。頭 h、腹の向き kind。戻り値は、肩から目標までの距離(腕の長さに対する割合)の並び */
+    const place = (h, kind, exact = false) => {
+      this._restoreSnapshot(vrm, base);
+      this._resetBody(vrm, active);
+      vrm.scene.updateMatrixWorld(true);
+      const front = kind === "prone"
+        ? new THREE.Vector3(0, -1, 0)
+        : kind === "supine"
+        ? new THREE.Vector3(0, 1, 0)
+        : kind === "right"
+        ? up.clone().cross(h) // 右を下にして寝る
+        : h.clone().cross(up); // 左を下にして寝る
+      const lat = h.clone().cross(front);
+      const target = new THREE.Matrix4().makeBasis(lat, h, front);
+      const turn = target.multiply(this._bodyFrame(vrm).transpose());
+      vrm.scene.quaternion.premultiply(
+        new THREE.Quaternion().setFromRotationMatrix(turn),
+      );
+      vrm.scene.updateMatrixWorld(true);
+      // 両肩の中点を、目標の手前(水平)へ
+      const mid = upper.reduce((a, n) => a.add(pos(n)), new THREE.Vector3())
+        .multiplyScalar(1 / upper.length);
+      vrm.scene.position.x += aim.x - toAim.x * LIE_SHOULDER_RATIO * meanReach -
+        mid.x;
+      vrm.scene.position.z += aim.z - toAim.z * LIE_SHOULDER_RATIO * meanReach -
+        mid.z;
+      vrm.scene.updateMatrixWorld(true);
+      const low = exact ? lowestY(vrm) : this._boneLowestY(vrm);
+      if (low !== null) vrm.scene.position.y += floor0 - low;
+      vrm.scene.updateMatrixWorld(true);
+      return hands.map(({ e }, k) =>
+        pos(upper[k]).distanceTo(e.target) / reaches[k]
+      );
+    };
+    // 簡単な判定: どの目標にも、肩から腕が届く
+    const candidates = [];
+    for (let k = 0; k < LIE_HEADINGS; k++) {
+      const angle = (k * 2 * Math.PI) / LIE_HEADINGS;
+      const h = new THREE.Vector3(Math.sin(angle), 0, Math.cos(angle));
+      for (const kind of Object.keys(LIE_PREFERENCE)) {
+        const ratios = place(h, kind);
+        if (ratios.some((r) => r > 1)) continue;
+        const score = ratios.reduce(
+          (a, r) => a + Math.abs(r - LIE_SHOULDER_RATIO),
+          0,
+        ) + LIE_PREFERENCE[kind];
+        candidates.push({ h, kind, score });
+      }
+    }
+    candidates.sort((a, b) => a.score - b.score);
+    const sum = (rs) => rs.reduce((a, r) => a + r.cost, 0);
+    const locked = goals.map((g) => ({ ...g, lockTrunk: true }));
+    let best = null;
+    for (const cand of candidates.slice(0, LIE_CANDIDATES)) {
+      place(cand.h, cand.kind, true);
+      let results = null;
+      let last = Infinity;
+      for (let pass = 0; pass < LIE_PASSES; pass++) {
+        results = solveChains(vrm, locked, this._surfaces(vrm) ?? null) ??
+          results;
+        if (results.every((r) => r.posErr < LIE_DONE_ERROR)) break;
+        const now = sum(results);
+        if (now > last * 0.9) break; // もう良くならない
+        last = now;
+      }
+      if (!results) continue;
+      const cost = sum(results);
+      if (!best || cost < best.cost) {
+        best = { ...cand, cost, snap: this._snapshot(vrm), results };
+      }
+    }
+    if (!best || best.cost > sum(before) * 0.8) {
+      this._restoreSnapshot(vrm, base);
+      return null;
+    }
+    this._restoreSnapshot(vrm, best.snap);
+    u.ikPosture = best.kind;
+    u.ikUprightQ = base.q.clone();
+    u.ikUprightP = base.p.clone();
+    u.ikUprightLift = u.groundLift || 0;
+    u.ikFloorY = floor0;
+    u.ikLieBad = 0;
+    u.ikLieQ = vrm.scene.quaternion.clone();
+    u.groundLift = 0; // 高さは、ここで床に合わせてある
+    return best.results;
+  }
+
+  /** 体のいちばん低い点の高さの目安(ボーンの位置から、太さを引いたもの)。候補を絞り込むときの、軽い見積もり */
+  _boneLowestY(vrm) {
+    const hm = vrm.humanoid;
+    let low = Infinity;
+    for (const name of Object.keys(hm.humanBones)) {
+      const n = hm.getNormalizedBoneNode(name);
+      if (!n) continue;
+      const r = /hips|spine|chest|neck|head/.test(name) ? 0.1 : 0.04;
+      low = Math.min(low, n.getWorldPosition(_v1).y - r);
+    }
+    return low;
+  }
+
+  /** 横たえた体を、立ち姿に戻す(向きと位置は、横たえる前のところ) */
+  _standUp(vrm, active) {
+    const u = vrm.scene.userData;
+    if (!u.ikPosture) return;
+    this._resetBody(vrm, active);
+    vrm.scene.quaternion.copy(u.ikUprightQ);
+    vrm.scene.position.copy(u.ikUprightP);
+    u.groundLift = u.ikUprightLift;
+    delete u.ikPosture;
+    delete u.ikFloorY;
+    vrm.scene.updateMatrixWorld(true);
   }
 
   /** 腰を spot(水平)へ動かし、目標(水平)のほうを向く。足元(モデルの原点)を軸に回してから動く */
@@ -3666,8 +4253,7 @@ export class IkManager {
     );
     if (!hips || arm.some((n) => !n)) return false;
     const pos = (n) => n.getWorldPosition(new THREE.Vector3());
-    const armLength = pos(arm[0]).distanceTo(pos(arm[1])) +
-      pos(arm[1]).distanceTo(pos(arm[2]));
+    const armLength = this._armReach(pos, arm, e.part);
     const obstacles = this._callbacks.getObstacles?.(vrm);
     const here = pos(hips);
     const floor = vrm.scene.position.y;

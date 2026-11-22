@@ -347,6 +347,17 @@ export class SceneManager {
     vrm.scene.updateMatrixWorld(true);
   }
 
+  /** 体のいちばん低い点の高さ(ワールドの y)。接地の機能がオフでも測れる。測れなければ null */
+  bodyLowestY(vrm) {
+    let contact = this._groundContacts.get(vrm);
+    if (!contact) {
+      contact = new GroundContact(vrm);
+      this._groundContacts.set(vrm, contact);
+    }
+    vrm.scene.updateMatrixWorld(true);
+    return contact.lowestY();
+  }
+
   _animate() {
     this._animationId = requestAnimationFrame(() => this._animate());
     this._timer.update();

@@ -78,6 +78,8 @@ console.info("[vrm-pose-app] build: 2026-10-18-perf-v1");
 
 /** IK の画面に出す部位 */
 const IK_UI_CHAINS = ["leftHand", "rightHand", "leftFoot", "rightFoot"];
+// 手のひらでは触れない部位(握れない。面の上での回転も決めない)
+const NON_PALM_PARTS = ["fingers", "elbow", "forearm"];
 
 class App {
   constructor() {
@@ -209,6 +211,7 @@ class App {
     // 手を指定した場所に置く(IK)。目標点はモデルごとに持ち、画面上の印(丸)をクリック/ドラッグで指定する
     this._ik = new IkManager(this._scene.scene, {
       getBodySurface: (vrm) => this._scene.getBodySurface(vrm),
+      getLowestY: (vrm) => this._scene.bodyLowestY(vrm),
       getOtherVrms: (vrm) =>
         this._models.map((m) => m.vrm).filter((v) => v !== vrm),
       withObjectTest: (fn) => this._objects.withInsideTest(fn),
@@ -1098,7 +1101,7 @@ class App {
       }
       const roll = document.getElementById(`ik-roll-${chain}`);
       if (roll) {
-        roll.disabled = !target?.normal; // 面に置いた手だけ、手のひらを回せる
+        roll.disabled = !target?.normal; // 面に置いたときだけ、回せる
         roll.value = Math.round(
           ((target?.fingerBase ? target.roll : 0) * 180) / Math.PI,
         ); // 自動で選んだ向きも表示する
@@ -1106,11 +1109,11 @@ class App {
       const grip = document.getElementById(`ik-grip-${chain}`);
       if (grip) {
         // 手のひら側(中心・掌底・甲)で触れた手だけ、握れる
-        grip.disabled = !target?.normal || target.part === "fingers";
+        grip.disabled = !target?.normal || NON_PALM_PARTS.includes(target.part);
         grip.value = Math.round(this._ik.getGrip(this._vrm, chain) * 100);
       }
       const setup = this._vrm && this._ik.getGripSetup(this._vrm, chain);
-      const gripOff = !target?.normal || target.part === "fingers";
+      const gripOff = !target?.normal || NON_PALM_PARTS.includes(target.part);
       document.querySelectorAll(
         `#ik-grip-fingers-${chain} input[data-grip-finger]`,
       )
@@ -1125,7 +1128,8 @@ class App {
       }
       const gripAuto = document.querySelector(`[data-ik-grip-auto="${chain}"]`);
       if (gripAuto) {
-        gripAuto.disabled = !target?.normal || target.part === "fingers";
+        gripAuto.disabled = !target?.normal ||
+          NON_PALM_PARTS.includes(target.part);
       }
     }
     document.getElementById("ik-hint")?.classList.toggle("d-none", !placing);
