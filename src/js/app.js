@@ -452,7 +452,9 @@ class App {
       document.getElementById(`ik-part-${chain}`)?.addEventListener(
         "change",
         (e) => {
-          if (this._vrm) this._ik.setPart(this._vrm, chain, e.target.value);
+          if (!this._vrm) return;
+          this._ik.setPart(this._vrm, chain, e.target.value);
+          this._syncIkUi(); // 指の選択欄の表示を合わせる
         },
       );
       document.getElementById(`ik-fingers-${chain}`)?.addEventListener(
@@ -1087,8 +1089,9 @@ class App {
       );
       const part = document.getElementById(`ik-part-${chain}`);
       if (part) {
-        part.disabled = !target;
-        part.value = target?.part ??
+        const pending = this._ik.getPending(chain); // 置く前に選んだ部位・指
+        part.disabled = !this._vrm; // 置く前でも選べる(次に置く目標点に使う)
+        part.value = target?.part ?? pending.part ??
           (chain.endsWith("Foot") ? "sole" : "center");
         document.getElementById(`ik-fingers-row-${chain}`)?.classList.toggle(
           "d-none",
@@ -1096,7 +1099,8 @@ class App {
         );
         document.querySelectorAll(`#ik-fingers-${chain} input[data-finger]`)
           .forEach((el) => {
-            el.checked = target?.fingers?.includes(el.dataset.finger) ?? false;
+            el.checked = (target?.fingers ?? pending.fingers ?? ["Index"])
+              .includes(el.dataset.finger);
           });
       }
       const roll = document.getElementById(`ik-roll-${chain}`);

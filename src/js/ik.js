@@ -2080,6 +2080,7 @@ export class IkManager {
     this._callbacks = callbacks;
     // vrm → { vrm, chains: { [chain]: { target: Vector3, enabled: boolean, marker: Mesh } } }
     this._states = new Map();
+    this._pending = {}; // chain → { part, fingers }。目標点を置く前に選んだ部位・指(次に置く目標点に使う)
     this.walk = true; // 届かないとき、体ごと歩いて近づくか
     this._guards = new WeakMap();
     this._activeVrm = null;
@@ -3212,9 +3213,11 @@ export class IkManager {
 
   /** 面に触れさせる手の部位を変える(HAND_PARTS のキー)。接触の点を取り直して、向きを選び直す */
   setPart(vrm, chain, part) {
+    if (!(IK_CHAINS[chain].foot ? FOOT_PARTS : HAND_PARTS)[part]) return;
+    (this._pending[chain] ??= {}).part = part; // 目標点がまだ無くても覚えて、次に置くときに使う
     const e = this._chains(vrm)?.[chain];
     if (IK_CHAINS[chain].foot) {
-      if (!e || !FOOT_PARTS[part] || e.part === part) return;
+      if (!e || e.part === part) return;
       const limbChange = limbPart(chain, e.part) || limbPart(chain, part);
       e.part = part;
       if (limbChange) {
@@ -3238,6 +3241,7 @@ export class IkManager {
   setFingers(vrm, chain, keys) {
     const e = this._chains(vrm)?.[chain];
     const next = FINGER_KEYS.filter((k) => keys.includes(k));
+    if (next.length) (this._pending[chain] ??= {}).fingers = next;
     if (!e || !next.length || next.join() === e.fingers.join()) return;
     e.fingers = next;
     if (e.part === "fingers") {
@@ -3245,6 +3249,20 @@ export class IkManager {
       this.endFollow(vrm, chain);
     }
     this._callbacks.onChange?.();
+  }
+
+  /** 目標点を置く前に選んだ部位・指(なければ空) */
+  getPending(chain) {
+    return this._pending[chain] ?? {};
+  }
+
+  /** 新しく置いた目標点に、置く前に選んでおいた部位・指を使う */
+  applyPending(vrm, chain) {
+    const p = this._pending[chain];
+    const e = this._chains(vrm)?.[chain];
+    if (!p || !e) return;
+    if (p.fingers) e.fingers = [...p.fingers];
+    if (p.part && p.part !== e.part) this.setPart(vrm, chain, p.part);
   }
 
   getTarget(vrm, chain) {

@@ -97,7 +97,9 @@ export class IkInput {
       const placed = this._placementPoint(vrm, chain, p);
       // 何もない所は、奥行きが決まらず届かないことも多いので、置かない(指定は続ける。カメラの操作はそのまま通す)
       if (!placed) return;
+      const had = this._ik.getTarget(vrm, chain);
       this._ik.setTarget(vrm, chain, placed.point, placed.normal);
+      if (!had) this._ik.applyPending(vrm, chain); // 置く前に選んでおいた部位を使う
       this._beginDrag(chain, null);
       this._swallow(e);
       return;
